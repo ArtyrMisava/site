@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   CarFront,
   Crosshair,
+  FileSpreadsheet,
   LockKeyhole,
   LogOut,
   MapPin,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react';
 import { AdminModal } from './components/AdminModal';
 import { EditorPanel } from './components/EditorPanel';
+import { ExcelImportModal } from './components/ExcelImportModal';
 import { MapView } from './components/MapView';
 import { Sidebar } from './components/Sidebar';
 import { SESSION_KEY } from './auth';
@@ -23,7 +25,13 @@ import {
   makeDraft,
   STORAGE_KEY,
 } from './data';
-import type { EditorState, ItemFilter, ItemKind, MapItem } from './types';
+import type {
+  EditorState,
+  ItemFilter,
+  ItemKind,
+  MapItem,
+  PersonPoint,
+} from './types';
 
 export default function App() {
   const [items, setItems] = useState<MapItem[]>(loadItems);
@@ -36,6 +44,7 @@ export default function App() {
     sessionStorage.getItem(SESSION_KEY),
   );
   const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [excelImportOpen, setExcelImportOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [toast, setToast] = useState('');
 
@@ -105,6 +114,27 @@ export default function App() {
     setToast(editor.mode === 'create' ? 'Объект добавлен на карту' : 'Изменения сохранены');
   }
 
+  function openExcelImport() {
+    if (!isAdmin) {
+      setAdminModalOpen(true);
+      return;
+    }
+    setPlacement(null);
+    setEditor(null);
+    setToast('');
+    setExcelImportOpen(true);
+  }
+
+  function handleExcelImport(points: PersonPoint[]) {
+    if (points.length === 0) return;
+    setItems((current) => [...current, ...points]);
+    setFilter('person');
+    setSearch('');
+    setFocusedId(points.length === 1 ? points[0].id : null);
+    setExcelImportOpen(false);
+    setToast(`Импортировано точек: ${points.length}`);
+  }
+
   function handleDelete(id: string) {
     setItems((current) => current.filter((item) => item.id !== id));
     if (focusedId === id) setFocusedId(null);
@@ -134,6 +164,7 @@ export default function App() {
     setAdminName(null);
     setPlacement(null);
     setEditor(null);
+    setExcelImportOpen(false);
     setToast('Режим администратора выключен');
   }
 
@@ -207,12 +238,22 @@ export default function App() {
             </div>
             <div className="admin-toolbar-actions">
               <button
+                className="toolbar-add-button import"
+                type="button"
+                onClick={openExcelImport}
+              >
+                <span className="toolbar-icon"><FileSpreadsheet size={16} /></span>
+                <span className="toolbar-button-label">Импорт Excel</span>
+              </button>
+              <button
                 className={`toolbar-add-button person ${placement === 'person' ? 'active' : ''}`}
                 type="button"
                 onClick={() => startPlacement('person')}
               >
-                <span><MapPin size={16} /></span>
-                {placement === 'person' ? 'Отменить точку' : 'Добавить точку'}
+                <span className="toolbar-icon"><MapPin size={16} /></span>
+                <span className="toolbar-button-label">
+                  {placement === 'person' ? 'Отменить точку' : 'Добавить точку'}
+                </span>
                 {placement !== 'person' && <Plus size={14} />}
               </button>
               <button
@@ -220,8 +261,10 @@ export default function App() {
                 type="button"
                 onClick={() => startPlacement('vehicle')}
               >
-                <span><CarFront size={17} /></span>
-                {placement === 'vehicle' ? 'Отменить машину' : 'Добавить машину'}
+                <span className="toolbar-icon"><CarFront size={17} /></span>
+                <span className="toolbar-button-label">
+                  {placement === 'vehicle' ? 'Отменить машину' : 'Добавить машину'}
+                </span>
                 {placement !== 'vehicle' && <Plus size={14} />}
               </button>
             </div>
@@ -278,6 +321,15 @@ export default function App() {
           setToast('Режим администратора включён');
         }}
       />
+
+      {excelImportOpen && (
+        <ExcelImportModal
+          open
+          existingItems={items}
+          onClose={() => setExcelImportOpen(false)}
+          onImport={handleExcelImport}
+        />
+      )}
 
       {toast && (
         <div className="toast" role="status">
