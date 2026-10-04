@@ -25,6 +25,7 @@ interface MapViewProps {
   focusedItem: MapItem | null;
   placement: ItemKind | null;
   isAdmin: boolean;
+  excelConnected: boolean;
   onPlace: (lat: number, lng: number) => void;
   onEdit: (item: MapItem) => void;
   onMove: (id: string, lat: number, lng: number) => void;
@@ -40,9 +41,9 @@ function escapeHtml(value: string): string {
 }
 
 function personInitials(item: PersonPoint): string {
-  const first = item.firstName.trim().charAt(0);
-  const last = item.lastName.trim().charAt(0);
-  return escapeHtml(`${first}${last}`.toLocaleUpperCase('ru-RU') || '•');
+  const words = item.pointName.trim().split(/\s+/).filter(Boolean);
+  const initials = words.slice(0, 2).map((word) => word.charAt(0)).join('');
+  return escapeHtml(initials.toLocaleUpperCase('ru-RU') || '•');
 }
 
 function markerIcon(item: MapItem, focused: boolean): L.DivIcon {
@@ -98,19 +99,31 @@ function vehicleStatus(status: VehiclePoint['status']): string {
 function ObjectTooltip({ item }: { item: MapItem }) {
   if (item.kind === 'person') {
     return (
-      <div className="map-tooltip-card">
+      <div className="map-tooltip-card point-personnel-tooltip">
         <div className="tooltip-topline">
-          <span className="tooltip-type person">Точка сотрудника</span>
-          <span className="tooltip-live"><i /> На карте</span>
+          <span className="tooltip-type person">Точка · {item.personnel.length} сотр.</span>
+          <span className="tooltip-live"><i /> {item.sheetName ? 'Excel' : 'Локально'}</span>
         </div>
         <strong className="tooltip-title">{item.pointName}</strong>
-        <table>
-          <tbody>
-            <tr><th>Имя</th><td>{item.firstName}</td></tr>
-            <tr><th>Фамилия</th><td>{item.lastName}</td></tr>
-            <tr><th>Точка</th><td>{item.pointName}</td></tr>
-          </tbody>
-        </table>
+        {item.personnel.length > 0 ? (
+          <div className="personnel-tooltip-scroll">
+            <table className="personnel-tooltip-table">
+              <thead>
+                <tr><th>ФИО</th><th>Звание / должность</th></tr>
+              </thead>
+              <tbody>
+                {item.personnel.map((person) => (
+                  <tr key={person.id}>
+                    <td>{person.fullName}</td>
+                    <td>{person.position || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-tooltip-personnel">На этом листе пока нет сотрудников</div>
+        )}
       </div>
     );
   }
@@ -285,6 +298,7 @@ export function MapView({
   focusedItem,
   placement,
   isAdmin,
+  excelConnected,
   onPlace,
   onEdit,
   onMove,
@@ -314,7 +328,11 @@ export function MapView({
             key={item.id}
             item={item}
             focused={item.id === focusedItem?.id}
-            draggable={isAdmin && placement === null}
+            draggable={
+              isAdmin &&
+              placement === null &&
+              (item.kind === 'vehicle' || excelConnected)
+            }
             onEdit={onEdit}
             onMove={onMove}
           />

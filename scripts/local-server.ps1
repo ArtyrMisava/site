@@ -46,7 +46,23 @@ Write-Host "Site is running: $url" -ForegroundColor Green
 Write-Host "Press Ctrl+C to stop the local server." -ForegroundColor DarkGray
 Write-Host ""
 
-Start-Process $url
+# Direct Excel file linking requires the File System Access API.
+# Microsoft Edge is present on standard Windows installations; prefer it over
+# the default browser so saving back to the same .xlsx file is available.
+$browserCandidates = @(
+    "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+    "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+    "$env:LocalAppData\Google\Chrome\Application\chrome.exe",
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+)
+$preferredBrowser = $browserCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+if ($preferredBrowser) {
+    Start-Process -FilePath $preferredBrowser -ArgumentList $url
+}
+else {
+    Start-Process $url
+}
 
 function Get-ContentType([string]$Path) {
     switch ([System.IO.Path]::GetExtension($Path).ToLowerInvariant()) {
@@ -62,6 +78,7 @@ function Get-ContentType([string]$Path) {
         ".ico"  { return "image/x-icon" }
         ".woff" { return "font/woff" }
         ".woff2" { return "font/woff2" }
+        ".xlsx" { return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
         default  { return "application/octet-stream" }
     }
 }

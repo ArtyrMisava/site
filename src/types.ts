@@ -10,11 +10,18 @@ interface BaseMapItem {
   updatedAt: string;
 }
 
+export interface PersonnelEntry {
+  id: string;
+  fullName: string;
+  position: string;
+}
+
 export interface PersonPoint extends BaseMapItem {
   kind: 'person';
-  firstName: string;
-  lastName: string;
   pointName: string;
+  personnel: PersonnelEntry[];
+  excelId?: string;
+  sheetName?: string;
 }
 
 export interface VehiclePoint extends BaseMapItem {

@@ -1,20 +1,31 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   CarFront,
+  FileSpreadsheet,
+  Link2,
   MapPin,
   Navigation,
+  Plus,
   Save,
   Trash2,
   UserRound,
+  UsersRound,
   X,
 } from 'lucide-react';
 import { MAP_HEIGHT } from '../data';
-import type { EditorState, MapItem, VehicleStatus } from '../types';
+import type {
+  EditorState,
+  MapItem,
+  PersonnelEntry,
+  VehicleStatus,
+} from '../types';
 
 interface EditorPanelProps {
   editor: EditorState;
+  excelConnected: boolean;
+  saving?: boolean;
   onCancel: () => void;
-  onSave: (item: MapItem) => void;
+  onSave: (item: MapItem) => void | Promise<void>;
   onDelete: (id: string) => void;
 }
 
@@ -24,8 +35,18 @@ const vehicleStatuses: Array<{ value: VehicleStatus; label: string }> = [
   { value: 'service', label: 'Обслуживание' },
 ];
 
+function newPersonnelEntry(): PersonnelEntry {
+  return {
+    id: crypto.randomUUID?.() ?? `person-${Date.now()}`,
+    fullName: '',
+    position: '',
+  };
+}
+
 export function EditorPanel({
   editor,
+  excelConnected,
+  saving = false,
   onCancel,
   onSave,
   onDelete,
@@ -48,41 +69,82 @@ export function EditorPanel({
     setError('');
 
     if (draft.kind === 'person') {
-      if (!draft.firstName.trim() || !draft.lastName.trim() || !draft.pointName.trim()) {
-        setError('Заполните имя, фамилию и название точки.');
+      if (!draft.pointName.trim()) {
+        setError('Укажите название точки — оно станет названием листа Excel.');
         return;
       }
-    } else if (!draft.name.trim()) {
-      setError('Укажите номер или название машины.');
+      if (draft.personnel.some((person) => !person.fullName.trim() && person.position.trim())) {
+        setError('У сотрудника со званием или должностью должно быть заполнено ФИО.');
+        return;
+      }
+      void onSave({
+        ...draft,
+        pointName: draft.pointName.trim(),
+        personnel: draft.personnel
+          .filter((person) => person.fullName.trim())
+          .map((person) => ({
+            ...person,
+            fullName: person.fullName.trim(),
+            position: person.position.trim(),
+          })),
+        updatedAt: new Date().toISOString(),
+      });
       return;
     }
 
-    onSave({ ...draft, updatedAt: new Date().toISOString() });
+    if (!draft.name.trim()) {
+      setError('Укажите номер или название машины.');
+      return;
+    }
+    void onSave({ ...draft, updatedAt: new Date().toISOString() });
   }
 
   function requestDelete() {
-    const title =
-      draft.kind === 'person'
-        ? `${draft.firstName} ${draft.lastName}`.trim() || 'эту точку'
-        : draft.name || 'эту машину';
-    if (window.confirm(`Удалить «${title}» с карты?`)) {
+    const title = draft.kind === 'person' ? draft.pointName || 'эту точку' : draft.name || 'эту машину';
+    const excelWarning = draft.kind === 'person' && draft.sheetName
+      ? '\nСвязанный лист Excel также будет удалён.'
+      : '';
+    if (window.confirm(`Удалить «${title}» с карты?${excelWarning}`)) {
       onDelete(draft.id);
     }
+  }
+
+  function updatePerson(id: string, field: 'fullName' | 'position', value: string) {
+    setDraft((current) => current.kind === 'person'
+      ? {
+          ...current,
+          personnel: current.personnel.map((person) =>
+            person.id === id ? { ...person, [field]: value } : person,
+          ),
+        }
+      : current);
+  }
+
+  function removePerson(id: string) {
+    setDraft((current) => current.kind === 'person'
+      ? { ...current, personnel: current.personnel.filter((person) => person.id !== id) }
+      : current);
+  }
+
+  function addPerson() {
+    setDraft((current) => current.kind === 'person'
+      ? { ...current, personnel: [...current.personnel, newPersonnelEntry()] }
+      : current);
   }
 
   return (
     <aside className="editor-panel" aria-label="Редактор объекта">
       <div className="editor-header">
         <div className={`editor-kind-icon ${draft.kind}`} aria-hidden="true">
-          {draft.kind === 'person' ? <UserRound size={20} /> : <CarFront size={21} />}
+          {draft.kind === 'person' ? <MapPin size={20} /> : <CarFront size={21} />}
         </div>
         <div>
           <p className="eyebrow">
             {editor.mode === 'create' ? 'Новый объект' : 'Редактирование'}
           </p>
-          <h2>{draft.kind === 'person' ? 'Точка сотрудника' : 'Служебная машина'}</h2>
+          <h2>{draft.kind === 'person' ? 'Точка и сотрудники' : 'Служебная машина'}</h2>
         </div>
-        <button className="icon-button editor-close" type="button" onClick={onCancel} aria-label="Закрыть редактор">
+        <button className="icon-button editor-close" type="button" onClick={onCancel} aria-label="Закрыть редактор" disabled={saving}>
           <X size={19} />
         </button>
       </div>
@@ -96,39 +158,69 @@ export function EditorPanel({
       <form className="editor-form" onSubmit={submit}>
         {draft.kind === 'person' ? (
           <>
-            <div className="field-grid two-columns">
-              <label>
-                <span className="field-label">Имя</span>
-                <input
-                  value={draft.firstName}
-                  onChange={(event) =>
-                    setDraft({ ...draft, firstName: event.target.value })
-                  }
-                  placeholder="Иван"
-                  autoFocus
-                />
-              </label>
-              <label>
-                <span className="field-label">Фамилия</span>
-                <input
-                  value={draft.lastName}
-                  onChange={(event) =>
-                    setDraft({ ...draft, lastName: event.target.value })
-                  }
-                  placeholder="Петров"
-                />
-              </label>
-            </div>
             <label>
-              <span className="field-label">Название точки</span>
+              <span className="field-label">Название точки / листа Excel</span>
               <input
                 value={draft.pointName}
-                onChange={(event) =>
-                  setDraft({ ...draft, pointName: event.target.value })
-                }
-                placeholder="Например, Главный склад"
+                onChange={(event) => setDraft({ ...draft, pointName: event.target.value })}
+                placeholder="Например, КПП № 1"
+                autoFocus
               />
             </label>
+
+            {excelConnected && (
+              <div className={`excel-editor-link ${draft.sheetName ? 'linked' : 'new'}`}>
+                <FileSpreadsheet size={17} />
+                <p>
+                  <strong>{draft.sheetName ? `Лист «${draft.sheetName}»` : 'Будет создан новый лист'}</strong>
+                  <span>{draft.sheetName ? 'Изменения сохранятся в связанную книгу' : 'Лист появится в Excel после сохранения точки'}</span>
+                </p>
+                <Link2 size={14} />
+              </div>
+            )}
+
+            <section className="personnel-editor">
+              <div className="personnel-editor-heading">
+                <div><UsersRound size={17} /><p><strong>Сотрудники точки</strong><span>Столбцы A и B связанного листа</span></p></div>
+                <small>{draft.personnel.length}</small>
+              </div>
+
+              {draft.personnel.length === 0 ? (
+                <div className="empty-personnel">
+                  <UserRound size={21} />
+                  <p><strong>Список пока пуст</strong><span>Можно добавить сотрудника сейчас или заполнить лист в Excel.</span></p>
+                </div>
+              ) : (
+                <div className="personnel-rows">
+                  {draft.personnel.map((person, index) => (
+                    <div className="personnel-row" key={person.id}>
+                      <span className="personnel-index">{index + 1}</span>
+                      <div className="personnel-inputs">
+                        <input
+                          value={person.fullName}
+                          onChange={(event) => updatePerson(person.id, 'fullName', event.target.value)}
+                          placeholder="Фамилия Имя Отчество"
+                          aria-label={`ФИО сотрудника ${index + 1}`}
+                        />
+                        <input
+                          value={person.position}
+                          onChange={(event) => updatePerson(person.id, 'position', event.target.value)}
+                          placeholder="Звание или должность"
+                          aria-label={`Должность сотрудника ${index + 1}`}
+                        />
+                      </div>
+                      <button type="button" onClick={() => removePerson(person.id)} aria-label={`Удалить сотрудника ${index + 1}`}>
+                        <X size={15} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button className="add-person-button" type="button" onClick={addPerson}>
+                <Plus size={15} /> Добавить сотрудника
+              </button>
+            </section>
           </>
         ) : (
           <>
@@ -153,17 +245,10 @@ export function EditorPanel({
               <span className="field-label">Статус</span>
               <select
                 value={draft.status}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    status: event.target.value as VehicleStatus,
-                  })
-                }
+                onChange={(event) => setDraft({ ...draft, status: event.target.value as VehicleStatus })}
               >
                 {vehicleStatuses.map((status) => (
-                  <option key={status.value} value={status.value}>
-                    {status.label}
-                  </option>
+                  <option key={status.value} value={status.value}>{status.label}</option>
                 ))}
               </select>
             </label>
@@ -176,11 +261,7 @@ export function EditorPanel({
               <div className="heading-row">
                 <div className="compass-preview" aria-hidden="true">
                   <span>С</span>
-                  <Navigation
-                    size={24}
-                    fill="currentColor"
-                    style={{ transform: `rotate(${draft.heading}deg)` }}
-                  />
+                  <Navigation size={24} fill="currentColor" style={{ transform: `rotate(${draft.heading}deg)` }} />
                 </div>
                 <input
                   className="range-input"
@@ -190,9 +271,7 @@ export function EditorPanel({
                   step="1"
                   value={draft.heading}
                   aria-label="Направление в градусах"
-                  onChange={(event) =>
-                    setDraft({ ...draft, heading: Number(event.target.value) })
-                  }
+                  onChange={(event) => setDraft({ ...draft, heading: Number(event.target.value) })}
                 />
                 <input
                   className="heading-number"
@@ -203,20 +282,12 @@ export function EditorPanel({
                   aria-label="Направление числом"
                   onChange={(event) => {
                     const value = Number(event.target.value);
-                    setDraft({
-                      ...draft,
-                      heading: Number.isFinite(value)
-                        ? Math.min(359, Math.max(0, value))
-                        : 0,
-                    });
+                    setDraft({ ...draft, heading: Number.isFinite(value) ? Math.min(359, Math.max(0, value)) : 0 });
                   }}
                 />
               </div>
               <div className="cardinal-labels" aria-hidden="true">
-                <span>Север 0°</span>
-                <span>Восток 90°</span>
-                <span>Юг 180°</span>
-                <span>Запад 270°</span>
+                <span>Север 0°</span><span>Восток 90°</span><span>Юг 180°</span><span>Запад 270°</span>
               </div>
             </div>
           </>
@@ -225,14 +296,13 @@ export function EditorPanel({
         {error && <p className="form-error">{error}</p>}
 
         <div className="editor-actions">
-          <button className="primary-button" type="submit">
+          <button className="primary-button" type="submit" disabled={saving}>
             <Save size={17} />
-            {editor.mode === 'create' ? 'Добавить на карту' : 'Сохранить изменения'}
+            {saving ? 'Сохраняем…' : editor.mode === 'create' ? 'Добавить на карту' : 'Сохранить изменения'}
           </button>
           {editor.mode === 'edit' && (
-            <button className="danger-button" type="button" onClick={requestDelete}>
-              <Trash2 size={17} />
-              Удалить
+            <button className="danger-button" type="button" onClick={requestDelete} disabled={saving}>
+              <Trash2 size={17} /> Удалить
             </button>
           )}
         </div>
