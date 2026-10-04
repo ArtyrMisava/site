@@ -1,24 +1,22 @@
-import { useEffect, useMemo } from 'react';
-import L, {
-  type LeafletEventHandlerFnMap,
-  type LatLngBoundsExpression,
-} from 'leaflet';
+import { useEffect, useMemo, useState } from 'react';
+import L, { type LeafletEventHandlerFnMap } from 'leaflet';
 import {
   ImageOverlay,
   MapContainer,
   Marker,
+  Pane,
   Tooltip,
   useMap,
   useMapEvents,
 } from 'react-leaflet';
-import { Maximize2, Minus, Plus } from 'lucide-react';
+import { Fullscreen, Maximize2, Minimize2, Minus, Plus } from 'lucide-react';
 import { MAP_HEIGHT, MAP_WIDTH } from '../data';
 import type { ItemKind, MapItem, PersonPoint, VehiclePoint } from '../types';
 
-const MAP_BOUNDS: LatLngBoundsExpression = [
+const MAP_BOUNDS = L.latLngBounds(
   [0, 0],
   [MAP_HEIGHT, MAP_WIDTH],
-];
+);
 
 interface MapViewProps {
   items: MapItem[];
@@ -29,6 +27,20 @@ interface MapViewProps {
   onPlace: (lat: number, lng: number) => void;
   onEdit: (item: MapItem) => void;
   onMove: (id: string, lat: number, lng: number) => void;
+}
+
+interface MapPlace {
+  name: string;
+  x: number;
+  y: number;
+  population: number;
+  capital: boolean;
+  rank: number;
+  minZoom: number;
+}
+
+interface PlacesPayload {
+  places: MapPlace[];
 }
 
 function escapeHtml(value: string): string {
@@ -44,6 +56,34 @@ function personInitials(item: PersonPoint): string {
   const words = item.pointName.trim().split(/\s+/).filter(Boolean);
   const initials = words.slice(0, 2).map((word) => word.charAt(0)).join('');
   return escapeHtml(initials.toLocaleUpperCase('ru-RU') || '•');
+}
+
+function placeIcon(place: MapPlace): L.DivIcon {
+  const sizeClass = place.capital || place.population >= 900_000
+    ? 'major'
+    : place.population >= 250_000
+      ? 'medium'
+      : 'small';
+  const sideClass = place.x > MAP_WIDTH - 120 ? ' align-left' : '';
+
+  return L.divIcon({
+    className: 'leaflet-place-icon',
+    iconSize: [1, 1],
+    iconAnchor: [0, 0],
+    html: `
+      <span class="map-place ${sizeClass}${sideClass}">
+        <i></i><span>${escapeHtml(place.name)}</span>
+      </span>
+    `,
+  });
+}
+
+function minimumPopulationForZoom(zoom: number): number {
+  if (zoom < 0) return 700_000;
+  if (zoom < 0.75) return 300_000;
+  if (zoom < 1.5) return 100_000;
+  if (zoom < 2.4) return 35_000;
+  return 0;
 }
 
 function markerIcon(item: MapItem, focused: boolean): L.DivIcon {
@@ -148,29 +188,101 @@ function ObjectTooltip({ item }: { item: MapItem }) {
   );
 }
 
+function constrainMapToBounds(map: L.Map, fit = false) {
+  // Сначала снимаем прежний динамический минимум: после выхода из полного
+  // экрана размер контейнера уменьшается, поэтому допустимый минимум тоже
+  // должен пересчитаться вниз.
+  map.setMinZoom(-4);
+  const fitZoom = map.getBoundsZoom(MAP_BOUNDS, false, L.point(0, 0));
+  map.setMinZoom(fitZoom);
+  map.setMaxBounds(MAP_BOUNDS);
+
+  if (fit || map.getZoom() < fitZoom) {
+    map.fitBounds(MAP_BOUNDS, { padding: [0, 0], animate: false });
+  } else {
+    map.panInsideBounds(MAP_BOUNDS, { animate: false });
+  }
+}
+
+function OfflineMapLayers() {
+  const map = useMap();
+  const [zoom, setZoom] = useState(map.getZoom());
+  const [places, setPlaces] = useState<MapPlace[]>([]);
+
+  useMapEvents({
+    zoomend() {
+      setZoom(map.getZoom());
+    },
+  });
+
+  useEffect(() => {
+    let active = true;
+    fetch('/maps/places.json')
+      .then((response) => {
+        if (!response.ok) throw new Error('Не удалось загрузить названия населённых пунктов');
+        return response.json() as Promise<PlacesPayload>;
+      })
+      .then((payload) => {
+        if (active) setPlaces(payload.places);
+      })
+      .catch(() => {
+        if (active) setPlaces([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const visiblePlaces = useMemo(() => {
+    const minimumPopulation = minimumPopulationForZoom(zoom);
+    return places.filter((place) => place.capital || place.population >= minimumPopulation);
+  }, [places, zoom]);
+
+  const detailed = zoom >= 1;
+
+  return (
+    <>
+      <ImageOverlay
+        url="/maps/real-region.svg"
+        bounds={MAP_BOUNDS}
+        opacity={detailed ? 0 : 1}
+      />
+      <ImageOverlay
+        url="/maps/real-region-detail.svg"
+        bounds={MAP_BOUNDS}
+        opacity={detailed ? 1 : 0}
+      />
+      <Pane name="place-labels" style={{ zIndex: 450, pointerEvents: 'none' }}>
+        {visiblePlaces.map((place) => (
+          <Marker
+            key={`${place.name}-${place.x}-${place.y}`}
+            position={[MAP_HEIGHT - place.y, place.x]}
+            icon={placeIcon(place)}
+            interactive={false}
+            keyboard={false}
+          />
+        ))}
+      </Pane>
+    </>
+  );
+}
+
 function FitMapOnStart() {
   const map = useMap();
 
   useEffect(() => {
-    map.fitBounds(MAP_BOUNDS, { padding: [18, 18], animate: false });
+    const fit = () => {
+      map.invalidateSize({ animate: false, pan: false });
+      constrainMapToBounds(map, true);
+    };
+    const keepInside = () => constrainMapToBounds(map);
+    const frame = window.requestAnimationFrame(fit);
+    map.on('resize', keepInside);
 
-    // На узком экране полная широкая схема оставляет большие пустые поля.
-    // Заполняем карту по высоте, сохраняя возможность показать весь город
-    // отдельной кнопкой в панели масштаба.
-    const viewport = map.getSize();
-    if (viewport.x < 700) {
-      const verticalFillZoom = Math.log2(
-        Math.max(1, viewport.y - 40) / MAP_HEIGHT,
-      );
-      map.setZoom(Math.max(map.getZoom(), verticalFillZoom), {
-        animate: false,
-      });
-    }
-
-    map.setMaxBounds([
-      [-180, -260],
-      [MAP_HEIGHT + 180, MAP_WIDTH + 260],
-    ]);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      map.off('resize', keepInside);
+    };
   }, [map]);
 
   return null;
@@ -210,21 +322,75 @@ function PlacementHandler({
 
 function MapControls() {
   const map = useMap();
+  const [zoom, setZoom] = useState(map.getZoom());
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useMapEvents({
+    zoomend() {
+      setZoom(map.getZoom());
+    },
+  });
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const wrapper = map.getContainer().closest('.map-wrap');
+      setIsFullscreen(document.fullscreenElement === wrapper);
+      window.setTimeout(() => {
+        map.invalidateSize({ animate: false, pan: false });
+        constrainMapToBounds(map);
+      }, 80);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, [map]);
+
+  async function toggleFullscreen() {
+    const wrapper = map.getContainer().closest<HTMLElement>('.map-wrap');
+    if (!wrapper || !document.fullscreenEnabled) return;
+    try {
+      if (document.fullscreenElement === wrapper) {
+        await document.exitFullscreen();
+      } else {
+        await wrapper.requestFullscreen();
+      }
+    } catch {
+      // Браузер может запретить полноэкранный режим вне пользовательского клика.
+    }
+  }
+
+  const cannotZoomOut = zoom <= map.getMinZoom() + 0.01;
 
   return (
     <div className="map-controls leaflet-control" onDoubleClick={(event) => event.stopPropagation()}>
-      <button type="button" onClick={() => map.zoomIn()} aria-label="Приблизить карту">
+      <button type="button" onClick={() => map.zoomIn()} aria-label="Приблизить карту" title="Приблизить">
         <Plus size={18} />
       </button>
-      <button type="button" onClick={() => map.zoomOut()} aria-label="Отдалить карту">
+      <button
+        type="button"
+        onClick={() => map.zoomOut()}
+        disabled={cannotZoomOut}
+        aria-label="Отдалить карту"
+        title="Отдалить"
+      >
         <Minus size={18} />
       </button>
       <button
         type="button"
-        onClick={() => map.fitBounds(MAP_BOUNDS, { padding: [18, 18] })}
+        onClick={() => constrainMapToBounds(map, true)}
         aria-label="Показать всю карту"
+        title="Показать всю область"
       >
         <Maximize2 size={17} />
+      </button>
+      <button
+        type="button"
+        onClick={() => void toggleFullscreen()}
+        disabled={!document.fullscreenEnabled}
+        aria-label={isFullscreen ? 'Выйти из полноэкранного режима' : 'Открыть карту на весь экран'}
+        title={isFullscreen ? 'Выйти из полного экрана' : 'На весь экран'}
+      >
+        {isFullscreen ? <Minimize2 size={17} /> : <Fullscreen size={17} />}
       </button>
     </div>
   );
@@ -310,16 +476,18 @@ export function MapView({
         crs={L.CRS.Simple}
         center={[MAP_HEIGHT / 2, MAP_WIDTH / 2]}
         zoom={0}
-        minZoom={-1.5}
-        maxZoom={2.5}
+        minZoom={-4}
+        maxZoom={3.5}
+        maxBounds={MAP_BOUNDS}
+        maxBoundsViscosity={1}
         zoomSnap={0.25}
         zoomDelta={0.5}
-        wheelPxPerZoomLevel={90}
+        wheelPxPerZoomLevel={80}
         zoomControl={false}
         attributionControl={false}
         preferCanvas={false}
       >
-        <ImageOverlay url="/maps/real-region.svg" bounds={MAP_BOUNDS} />
+        <OfflineMapLayers />
         <FitMapOnStart />
         <FocusController item={focusedItem} />
         <PlacementHandler enabled={placement !== null} onPlace={onPlace} />
@@ -341,8 +509,8 @@ export function MapView({
       </MapContainer>
 
       <div className="map-demo-label">
-        <span>Реальная карта</span>
-        <small>Natural Earth · полностью офлайн</small>
+        <span>Расширенная карта</span>
+        <small>детализация при приближении · офлайн</small>
       </div>
       <div className="map-legend" aria-label="Условные обозначения">
         <span><i className="legend-dot person" /> Точка</span>

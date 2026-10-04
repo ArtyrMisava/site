@@ -942,6 +942,19 @@ button:disabled {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45), var(--shadow-sm);
 }
 
+.map-wrap:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+  background: #e8e9e4;
+  box-shadow: none;
+}
+
+.map-wrap:fullscreen::backdrop {
+  background: #e8e9e4;
+}
+
 .company-map {
   width: 100%;
   height: 100%;
@@ -956,6 +969,74 @@ button:disabled {
 
 .company-map .leaflet-image-layer {
   image-rendering: auto;
+}
+
+.leaflet-place-icon {
+  border: 0 !important;
+  background: transparent !important;
+  pointer-events: none !important;
+}
+
+.map-place {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  color: #343b3d;
+  pointer-events: none;
+  transform: translate(-2px, -50%);
+  white-space: nowrap;
+}
+
+.map-place > i {
+  width: 4px;
+  height: 4px;
+  flex: 0 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  border-radius: 50%;
+  background: #3d4647;
+  box-shadow: 0 0 0 0.5px rgba(42, 50, 50, 0.35);
+}
+
+.map-place > span {
+  margin-left: 3px;
+  font-size: 8px;
+  font-weight: 560;
+  line-height: 1;
+  text-shadow:
+    -1px -1px 0 rgba(250, 249, 244, 0.98),
+    1px -1px 0 rgba(250, 249, 244, 0.98),
+    -1px 1px 0 rgba(250, 249, 244, 0.98),
+    1px 1px 0 rgba(250, 249, 244, 0.98),
+    0 0 3px rgba(250, 249, 244, 0.98);
+}
+
+.map-place.medium > span {
+  font-size: 9px;
+  font-weight: 680;
+}
+
+.map-place.major > i {
+  width: 5px;
+  height: 5px;
+  flex-basis: 5px;
+  background: #263031;
+}
+
+.map-place.major > span {
+  font-size: 10.5px;
+  font-weight: 760;
+}
+
+.map-place.align-left {
+  flex-direction: row-reverse;
+  transform: translate(calc(-100% + 2px), -50%);
+}
+
+.map-place.align-left > span {
+  margin-right: 3px;
+  margin-left: 0;
 }
 
 .company-map .leaflet-control-container .leaflet-top,
@@ -1298,6 +1379,13 @@ button:disabled {
 .map-controls button:hover {
   color: #252d28;
   background: #f3f4ef;
+}
+
+.map-controls button:disabled,
+.map-controls button:disabled:hover {
+  color: #bec3bf;
+  background: transparent;
+  cursor: not-allowed;
 }
 
 .map-demo-label {

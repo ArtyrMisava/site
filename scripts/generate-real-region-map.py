@@ -9,6 +9,7 @@ Requires the `pyshp` and `shapely` Python packages.
 from __future__ import annotations
 
 import html
+import json
 import math
 import sys
 from pathlib import Path
@@ -20,10 +21,9 @@ from shapely.geometry import GeometryCollection, LineString, MultiLineString, Mu
 
 WIDTH = 1600
 HEIGHT = 1000
-# Geographic extent matched to the reference image: Kyiv/Pripyat in the north,
-# the Black Sea coast in the south, Moldova in the west, and Volgograd/Elista
-# in the east.
-WEST, SOUTH, EAST, NORTH = 26.85, 43.9, 45.05, 51.55
+# Expanded regional extent: all of Ukraine and Moldova, southern Belarus,
+# south-western Russia through the Lower Volga, the Black Sea and the Caucasus.
+WEST, SOUTH, EAST, NORTH = 21.5, 41.5, 49.0, 54.0
 
 
 def mercator_y(latitude: float) -> float:
@@ -115,7 +115,14 @@ def paths_for(path: Path, tolerance: float, close: bool = False, predicate=None)
 
 
 def path_elements(paths: Iterable[str], class_name: str) -> str:
-    return "".join(f'<path class="{class_name}" d="{path_data}"/>' for path_data in paths)
+    # Group many source features into moderately sized SVG paths. This keeps the
+    # detailed layer quick to parse without creating a single multi-megabyte DOM node.
+    items = list(paths)
+    chunk_size = 200
+    return "".join(
+        f'<path class="{class_name}" d="{"".join(items[index:index + chunk_size])}"/>'
+        for index in range(0, len(items), chunk_size)
+    )
 
 
 def text_element(x: float, y: float, value: str, class_name: str, anchor: str = "start", rotate: float | None = None) -> str:
@@ -126,17 +133,8 @@ def text_element(x: float, y: float, value: str, class_name: str, anchor: str = 
     )
 
 
-def boxes_overlap(first: tuple[float, float, float, float], second: tuple[float, float, float, float]) -> bool:
-    return not (
-        first[2] + 2 < second[0]
-        or second[2] + 2 < first[0]
-        or first[3] + 2 < second[1]
-        or second[3] + 2 < first[1]
-    )
-
-
-def city_layer(path: Path) -> str:
-    candidates: list[dict] = []
+def place_data(path: Path) -> list[dict[str, object]]:
+    places: list[dict[str, object]] = []
     for shape_record in records(path):
         if not shape_record.shape.points:
             continue
@@ -144,73 +142,50 @@ def city_layer(path: Path) -> str:
         if not (WEST <= longitude <= EAST and SOUTH <= latitude <= NORTH):
             continue
         properties = shape_record.record.as_dict()
-        population = max(0, int(properties.get("POP_MAX") or 0))
-        minimum_zoom = float(properties.get("MIN_ZOOM") or 99)
-        if population < 55_000 or minimum_zoom > 8.0:
-            continue
         name = properties.get("NAME_RU") or properties.get("NAME") or ""
         if not name:
             continue
         x, y = project((longitude, latitude))
-        candidates.append(
+        places.append(
             {
                 "name": name,
-                "x": x,
-                "y": y,
-                "population": population,
+                "x": round(x, 2),
+                "y": round(y, 2),
+                "population": max(0, int(properties.get("POP_MAX") or 0)),
                 "capital": bool(properties.get("ADM0CAP")),
-                "label_rank": int(properties.get("LABELRANK") or 9),
-                "min_zoom": minimum_zoom,
+                "rank": int(properties.get("LABELRANK") or 9),
+                "minZoom": float(properties.get("MIN_ZOOM") or 99),
             }
         )
 
-    candidates.sort(
-        key=lambda city: (
-            not city["capital"],
-            city["label_rank"],
-            -city["population"],
-            city["min_zoom"],
+    places.sort(
+        key=lambda place: (
+            not place["capital"],
+            place["rank"],
+            -int(place["population"]),
+            str(place["name"]),
         )
     )
+    return places
 
-    occupied: list[tuple[float, float, float, float]] = []
-    dots: list[str] = []
-    labels: list[str] = []
-    for city in candidates:
-        population = city["population"]
-        if city["capital"] or population >= 800_000:
-            font_size, class_name, radius = 12.2, "city-label major", 2.8
-        elif population >= 250_000:
-            font_size, class_name, radius = 10.4, "city-label medium", 2.2
-        else:
-            font_size, class_name, radius = 8.6, "city-label small", 1.6
 
-        x, y, name = city["x"], city["y"], city["name"]
-        dots.append(f'<circle class="city-dot" cx="{x:.1f}" cy="{y:.1f}" r="{radius:.1f}"/>')
-        text_width = max(12.0, len(name) * font_size * 0.56)
-        text_height = font_size * 1.25
-        positions = [
-            (x + 5, y - 4, "start"),
-            (x - 5, y - 4, "end"),
-            (x + 5, y + text_height, "start"),
-            (x - 5, y + text_height, "end"),
+def svg_document(style: str, layers: list[str], title: str) -> str:
+    style = "\n".join(line.rstrip() for line in style.strip().splitlines())
+    return "".join(
+        [
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}" role="img" aria-labelledby="title description">',
+            f'<title id="title">{html.escape(title)}</title>',
+            '<desc id="description">Подробная офлайн-карта на основе общедоступных данных Natural Earth.</desc>',
+            f'<defs><clipPath id="map-clip"><rect width="{WIDTH}" height="{HEIGHT}"/></clipPath></defs>',
+            f'<style>{style}</style>',
+            f'<rect width="{WIDTH}" height="{HEIGHT}" fill="#a9dcf4"/>',
+            '<g clip-path="url(#map-clip)">',
+            *layers,
+            '</g>',
+            f'<rect class="map-frame" x=".5" y=".5" width="{WIDTH - 1}" height="{HEIGHT - 1}"/>',
+            '</svg>',
         ]
-        placed = False
-        for label_x, label_y, anchor in positions:
-            left = label_x if anchor == "start" else label_x - text_width
-            box = (left, label_y - text_height, left + text_width, label_y + 2)
-            if box[0] < 3 or box[2] > WIDTH - 3 or box[1] < 3 or box[3] > HEIGHT - 3:
-                continue
-            if any(boxes_overlap(box, existing) for existing in occupied):
-                continue
-            occupied.append(box)
-            labels.append(text_element(label_x, label_y, name, class_name, anchor=anchor))
-            placed = True
-            break
-        if not placed and (city["capital"] or population >= 800_000):
-            labels.append(text_element(x + 5, y - 4, name, class_name))
-
-    return "".join(dots + labels)
+    )
 
 
 def main() -> None:
@@ -218,105 +193,121 @@ def main() -> None:
         raise SystemExit("Usage: generate-real-region-map.py <natural-earth-root> <output.svg>")
     root = Path(sys.argv[1])
     output = Path(sys.argv[2])
+    detail_output = output.with_name(f"{output.stem}-detail.svg")
+    places_output = output.with_name("places.json")
     physical = root / "physical"
     cultural = root / "cultural"
 
-    land = paths_for(physical / "ne_10m_land.shp", 0.45, close=True)
+    land = paths_for(physical / "ne_10m_land.shp", 0.34, close=True)
     regions = {
         "mountain": paths_for(
             physical / "ne_10m_geography_regions_polys.shp",
-            0.65,
+            0.45,
             close=True,
             predicate=lambda props: props.get("FEATURECLA") == "Range/mtn",
         ),
         "lowland": paths_for(
             physical / "ne_10m_geography_regions_polys.shp",
-            0.75,
+            0.55,
             close=True,
             predicate=lambda props: props.get("FEATURECLA") in {"Plain", "Lowland", "Delta"},
         ),
     }
-    urban = paths_for(cultural / "ne_10m_urban_areas.shp", 0.35, close=True)
-    lakes = paths_for(physical / "ne_10m_lakes.shp", 0.22, close=True)
-    rivers_main = paths_for(physical / "ne_10m_rivers_lake_centerlines.shp", 0.18)
-    rivers_europe = paths_for(
+    urban = paths_for(cultural / "ne_10m_urban_areas.shp", 0.22, close=True)
+    lakes = paths_for(physical / "ne_10m_lakes.shp", 0.16, close=True)
+    rivers_main = paths_for(physical / "ne_10m_rivers_lake_centerlines.shp", 0.12)
+    rivers_overview = paths_for(
         physical / "ne_10m_rivers_europe.shp",
-        0.16,
-        predicate=lambda props: int(props.get("scalerank") or 99) <= 10,
+        0.12,
+        predicate=lambda props: int(props.get("scalerank") or 99) <= 9,
     )
-    admin_one = paths_for(cultural / "ne_10m_admin_1_states_provinces_lines.shp", 0.18)
-    countries = paths_for(cultural / "ne_10m_admin_0_boundary_lines_land.shp", 0.15)
+    rivers_detail = paths_for(physical / "ne_10m_rivers_europe.shp", 0.08)
+    admin_one = paths_for(cultural / "ne_10m_admin_1_states_provinces_lines.shp", 0.13)
+    countries = paths_for(cultural / "ne_10m_admin_0_boundary_lines_land.shp", 0.1)
 
     road_path = cultural / "ne_10m_roads.shp"
     road_major = paths_for(
         road_path,
-        0.15,
+        0.09,
         predicate=lambda props: props.get("type") == "Major Highway" or int(props.get("scalerank") or 99) <= 4,
     )
     road_secondary = paths_for(
         road_path,
-        0.15,
+        0.09,
         predicate=lambda props: props.get("type") != "Ferry Route" and 5 <= int(props.get("scalerank") or 99) <= 7,
     )
     road_local = paths_for(
         road_path,
-        0.14,
+        0.07,
         predicate=lambda props: props.get("type") != "Ferry Route" and int(props.get("scalerank") or 99) == 8,
     )
+    road_minor = paths_for(
+        road_path,
+        0.05,
+        predicate=lambda props: props.get("type") != "Ferry Route" and int(props.get("scalerank") or 99) >= 9,
+    )
+    railroads = paths_for(cultural / "ne_10m_railroads.shp", 0.07)
 
-    sea_labels = [
-        text_element(*project((32.2, 44.35)), "Чёрное море", "water-label", anchor="middle"),
-        text_element(*project((36.3, 46.05)), "Азовское море", "water-label", anchor="middle"),
+    overview_labels = [
+        text_element(*project((32.0, 43.45)), "Чёрное море", "water-label", anchor="middle"),
+        text_element(*project((36.4, 46.05)), "Азовское море", "water-label", anchor="middle"),
+        text_element(*project((48.15, 43.15)), "Каспийское море", "water-label", anchor="middle", rotate=-78),
+        text_element(*project((24.8, 48.2)), "КАРПАТЫ", "terrain-label", anchor="middle", rotate=-30),
+        text_element(*project((43.7, 43.25)), "КАВКАЗ", "terrain-label", anchor="middle", rotate=-18),
     ]
-    physical_labels = [
-        text_element(*project((27.35, 47.7)), "КАРПАТЫ", "terrain-label", anchor="middle", rotate=-32),
-        text_element(*project((43.8, 44.15)), "КАВКАЗ", "terrain-label", anchor="middle", rotate=-18),
+    detail_labels = [
+        text_element(*project((32.0, 43.45)), "Чёрное море", "water-label", anchor="middle"),
+        text_element(*project((36.4, 46.05)), "Азовское море", "water-label", anchor="middle"),
+        text_element(*project((48.15, 43.15)), "Каспийское море", "water-label", anchor="middle", rotate=-78),
     ]
 
-    style = """
+    common_style = """
       .land{fill:#f4f1e7;stroke:none;fill-rule:evenodd}
       .terrain-low{fill:#dfeeda;fill-opacity:.54;stroke:none;fill-rule:evenodd}
-      .terrain-mountain{fill:#cae2c5;fill-opacity:.64;stroke:#b3d3ad;stroke-width:.45;fill-rule:evenodd}
-      .urban{fill:#d9ddd8;fill-opacity:.72;stroke:#cbd0cb;stroke-width:.25;fill-rule:evenodd}
-      .lake{fill:#8fd0f0;stroke:#72bfe7;stroke-width:.6;fill-rule:evenodd}
-      .river{fill:none;stroke:#7bc8ee;stroke-width:.65;stroke-linecap:round;stroke-linejoin:round}
-      .river-minor{fill:none;stroke:#91d3f1;stroke-width:.4;stroke-linecap:round;stroke-linejoin:round}
-      .admin-one{fill:none;stroke:#c7cbc5;stroke-width:.6;stroke-dasharray:2.8 2.1;stroke-linecap:round}
-      .country-casing{fill:none;stroke:#fff;stroke-opacity:.92;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
-      .country{fill:none;stroke:#84969b;stroke-width:1.05;stroke-linecap:round;stroke-linejoin:round}
-      .road-local-casing,.road-secondary-casing,.road-major-casing{fill:none;stroke:#fff;stroke-linecap:round;stroke-linejoin:round}
-      .road-local-casing{stroke-width:1.5;stroke-opacity:.88}
-      .road-secondary-casing{stroke-width:2.15;stroke-opacity:.94}
-      .road-major-casing{stroke-width:3.2}
-      .road-local{fill:none;stroke:#b7bec1;stroke-width:.38;stroke-linecap:round;stroke-linejoin:round}
-      .road-secondary{fill:none;stroke:#9ea9ae;stroke-width:.68;stroke-linecap:round;stroke-linejoin:round}
-      .road-major{fill:none;stroke:#df8b77;stroke-width:1.15;stroke-linecap:round;stroke-linejoin:round}
-      .city-dot{fill:#42494a;stroke:#fff;stroke-width:.85}
-      text{font-family:Arial,"Segoe UI",sans-serif;user-select:none}
-      .city-label{fill:#303638;paint-order:stroke;stroke:#faf9f4;stroke-width:2.8px;stroke-linejoin:round}
-      .city-label.major{font-size:12.2px;font-weight:700;stroke-width:3.5px}
-      .city-label.medium{font-size:10.4px;font-weight:650}
-      .city-label.small{fill:#495052;font-size:8.6px;font-weight:520;stroke-width:2.4px}
-      .water-label{fill:#347ba5;font-size:13px;font-style:italic;letter-spacing:2px;opacity:.88;paint-order:stroke;stroke:#a9def5;stroke-width:3px}
-      .terrain-label{fill:#71906e;font-size:8px;font-weight:700;letter-spacing:2.4px;opacity:.72;paint-order:stroke;stroke:#eff4e9;stroke-width:2.5px}
+      .terrain-mountain{fill:#cae2c5;fill-opacity:.64;stroke:#b3d3ad;stroke-width:.38;fill-rule:evenodd}
+      .urban{fill:#d9ddd8;fill-opacity:.74;stroke:#cbd0cb;stroke-width:.2;fill-rule:evenodd}
+      .lake{fill:#8fd0f0;stroke:#72bfe7;stroke-width:.45;fill-rule:evenodd}
       .map-frame{fill:none;stroke:#c6cbc5;stroke-width:1}
+      text{font-family:Arial,"Segoe UI",sans-serif;user-select:none}
+    """
+    overview_style = common_style + """
+      .river{fill:none;stroke:#73c5ec;stroke-width:.58;stroke-linecap:round;stroke-linejoin:round}
+      .river-minor{fill:none;stroke:#91d3f1;stroke-width:.32;stroke-linecap:round;stroke-linejoin:round}
+      .admin-one{fill:none;stroke:#c7cbc5;stroke-width:.5;stroke-dasharray:2.5 2;stroke-linecap:round}
+      .country-casing{fill:none;stroke:#fff;stroke-opacity:.92;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round}
+      .country{fill:none;stroke:#84969b;stroke-width:.9;stroke-linecap:round;stroke-linejoin:round}
+      .road-local-casing,.road-secondary-casing,.road-major-casing{fill:none;stroke:#fff;stroke-linecap:round;stroke-linejoin:round}
+      .road-local-casing{stroke-width:1.1;stroke-opacity:.82}
+      .road-secondary-casing{stroke-width:1.7;stroke-opacity:.94}
+      .road-major-casing{stroke-width:2.6}
+      .road-local{fill:none;stroke:#b7bec1;stroke-width:.26;stroke-linecap:round;stroke-linejoin:round}
+      .road-secondary{fill:none;stroke:#9ea9ae;stroke-width:.5;stroke-linecap:round;stroke-linejoin:round}
+      .road-major{fill:none;stroke:#df8b77;stroke-width:.9;stroke-linecap:round;stroke-linejoin:round}
+      .water-label{fill:#347ba5;font-size:11px;font-style:italic;letter-spacing:1.8px;opacity:.88;paint-order:stroke;stroke:#a9def5;stroke-width:2.6px}
+      .terrain-label{fill:#71906e;font-size:7px;font-weight:700;letter-spacing:2px;opacity:.72;paint-order:stroke;stroke:#eff4e9;stroke-width:2.1px}
+    """
+    detail_style = common_style + """
+      .river{fill:none;stroke:#6fc3eb;stroke-width:.2;stroke-linecap:round;stroke-linejoin:round}
+      .river-minor{fill:none;stroke:#8bd0ef;stroke-width:.1;stroke-linecap:round;stroke-linejoin:round}
+      .admin-one{fill:none;stroke:#bfc5bf;stroke-width:.16;stroke-dasharray:.8 .65;stroke-linecap:round}
+      .country-casing{fill:none;stroke:#fff;stroke-opacity:.9;stroke-width:.7;stroke-linecap:round;stroke-linejoin:round}
+      .country{fill:none;stroke:#7f9298;stroke-width:.28;stroke-linecap:round;stroke-linejoin:round}
+      .road-major-casing,.road-secondary-casing,.road-local-casing,.road-minor-casing{fill:none;stroke:#fff;stroke-linecap:round;stroke-linejoin:round}
+      .road-major-casing{stroke-width:.88}.road-secondary-casing{stroke-width:.56}.road-local-casing{stroke-width:.38}.road-minor-casing{stroke-width:.24;stroke-opacity:.8}
+      .road-major,.road-secondary,.road-local,.road-minor{fill:none;stroke-linecap:round;stroke-linejoin:round}
+      .road-major{stroke:#dc816d;stroke-width:.31}.road-secondary{stroke:#98a5aa;stroke-width:.18}.road-local{stroke:#aeb8bb;stroke-width:.11}.road-minor{stroke:#c0c7c7;stroke-width:.07}
+      .railroad{fill:none;stroke:#9ba2a0;stroke-width:.09;stroke-dasharray:.35 .3;stroke-linecap:round;opacity:.9}
+      .water-label{fill:#347ba5;font-size:3.3px;font-style:italic;letter-spacing:.55px;opacity:.8;paint-order:stroke;stroke:#a9def5;stroke-width:.75px}
     """
 
-    content = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}" role="img" aria-labelledby="title description">',
-        '<title id="title">Офлайн-карта региона Восточной Европы</title>',
-        '<desc id="description">Реальная географическая карта на основе общедоступных данных Natural Earth.</desc>',
-        '<defs><clipPath id="map-clip"><rect width="1600" height="1000"/></clipPath></defs>',
-        f'<style>{style}</style>',
-        '<rect width="1600" height="1000" fill="#a9dcf4"/>',
-        '<g clip-path="url(#map-clip)">',
+    base_layers = [
         path_elements(land, "land"),
         path_elements(regions["lowland"], "terrain-low"),
         path_elements(regions["mountain"], "terrain-mountain"),
         path_elements(urban, "urban"),
         path_elements(lakes, "lake"),
         path_elements(rivers_main, "river"),
-        path_elements(rivers_europe, "river-minor"),
+        path_elements(rivers_overview, "river-minor"),
         path_elements(admin_one, "admin-one"),
         path_elements(road_local, "road-local-casing"),
         path_elements(road_local, "road-local"),
@@ -326,14 +317,42 @@ def main() -> None:
         path_elements(road_major, "road-major"),
         path_elements(countries, "country-casing"),
         path_elements(countries, "country"),
-        "".join(sea_labels + physical_labels),
-        city_layer(cultural / "ne_10m_populated_places.shp"),
-        '</g><rect class="map-frame" x=".5" y=".5" width="1599" height="999"/>',
-        '</svg>',
+        "".join(overview_labels),
     ]
+    detail_layers = [
+        path_elements(land, "land"),
+        path_elements(regions["lowland"], "terrain-low"),
+        path_elements(regions["mountain"], "terrain-mountain"),
+        path_elements(urban, "urban"),
+        path_elements(lakes, "lake"),
+        path_elements(rivers_main, "river"),
+        path_elements(rivers_detail, "river-minor"),
+        path_elements(admin_one, "admin-one"),
+        path_elements(railroads, "railroad"),
+        path_elements(road_minor, "road-minor-casing"),
+        path_elements(road_minor, "road-minor"),
+        path_elements(road_local, "road-local-casing"),
+        path_elements(road_local, "road-local"),
+        path_elements(road_secondary, "road-secondary-casing"),
+        path_elements(road_secondary, "road-secondary"),
+        path_elements(road_major, "road-major-casing"),
+        path_elements(road_major, "road-major"),
+        path_elements(countries, "country-casing"),
+        path_elements(countries, "country"),
+        "".join(detail_labels),
+    ]
+
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text("".join(content), encoding="utf-8")
+    output.write_text(svg_document(overview_style, base_layers, "Расширенная офлайн-карта региона"), encoding="utf-8")
+    detail_output.write_text(svg_document(detail_style, detail_layers, "Подробная офлайн-карта региона"), encoding="utf-8")
+    places = {
+        "bounds": {"west": WEST, "south": SOUTH, "east": EAST, "north": NORTH},
+        "places": place_data(cultural / "ne_10m_populated_places.shp"),
+    }
+    places_output.write_text(json.dumps(places, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"Wrote {output} ({output.stat().st_size:,} bytes)")
+    print(f"Wrote {detail_output} ({detail_output.stat().st_size:,} bytes)")
+    print(f"Wrote {places_output} ({places_output.stat().st_size:,} bytes)")
 
 
 if __name__ == "__main__":
