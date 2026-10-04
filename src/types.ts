@@ -24,12 +24,21 @@ export interface PersonPoint extends BaseMapItem {
   sheetName?: string;
 }
 
+export interface RoutePoint {
+  lat: number;
+  lng: number;
+}
+
 export interface VehiclePoint extends BaseMapItem {
   kind: 'vehicle';
   name: string;
   driver: string;
   status: VehicleStatus;
   heading: number;
+  route: RoutePoint[];
+  routeSegment: number;
+  routeProgress: number;
+  routeSpeed: number;
 }
 
 export type MapItem = PersonPoint | VehiclePoint;

@@ -5,7 +5,11 @@ import {
   Link2,
   MapPin,
   Navigation,
+  Pause,
+  Play,
   Plus,
+  RotateCcw,
+  Route,
   Save,
   Trash2,
   UserRound,
@@ -17,6 +21,7 @@ import type {
   EditorState,
   MapItem,
   PersonnelEntry,
+  VehiclePoint,
   VehicleStatus,
 } from '../types';
 
@@ -24,9 +29,14 @@ interface EditorPanelProps {
   editor: EditorState;
   excelConnected: boolean;
   saving?: boolean;
+  vehicleRuntime?: VehiclePoint;
+  routeBuilding?: boolean;
   onCancel: () => void;
   onSave: (item: MapItem) => void | Promise<void>;
   onDelete: (id: string) => void;
+  onBeginRoute: (id: string, speed: number) => void;
+  onToggleVehicleMotion: (id: string, speed: number) => void;
+  onClearVehicleRoute: (id: string) => void;
 }
 
 const vehicleStatuses: Array<{ value: VehicleStatus; label: string }> = [
@@ -47,22 +57,37 @@ export function EditorPanel({
   editor,
   excelConnected,
   saving = false,
+  vehicleRuntime,
+  routeBuilding = false,
   onCancel,
   onSave,
   onDelete,
+  onBeginRoute,
+  onToggleVehicleMotion,
+  onClearVehicleRoute,
 }: EditorPanelProps) {
   const [draft, setDraft] = useState<MapItem>(editor.item);
   const [error, setError] = useState('');
+  const [statusEdited, setStatusEdited] = useState(false);
 
   useEffect(() => {
     setDraft(editor.item);
     setError('');
+    setStatusEdited(false);
   }, [editor]);
 
+  const routeVehicle = draft.kind === 'vehicle' ? (vehicleRuntime ?? draft) : null;
+  const currentPosition = routeVehicle ?? draft;
   const coordinates = useMemo(
-    () => `X ${Math.round(draft.lng)} · Y ${Math.round(MAP_HEIGHT - draft.lat)}`,
-    [draft.lat, draft.lng],
+    () => `X ${Math.round(currentPosition.lng)} · Y ${Math.round(MAP_HEIGHT - currentPosition.lat)}`,
+    [currentPosition.lat, currentPosition.lng],
   );
+  const hasRoute = Boolean(routeVehicle && routeVehicle.route.length > 1);
+  const routeFinished = Boolean(
+    routeVehicle && hasRoute && routeVehicle.routeSegment >= routeVehicle.route.length - 1,
+  );
+  const automaticHeading = Boolean(hasRoute && routeVehicle?.status === 'moving');
+  const displayedHeading = automaticHeading && routeVehicle ? routeVehicle.heading : draft.kind === 'vehicle' ? draft.heading : 0;
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -96,7 +121,25 @@ export function EditorPanel({
       setError('Укажите номер или название машины.');
       return;
     }
-    void onSave({ ...draft, updatedAt: new Date().toISOString() });
+    const liveRoute = vehicleRuntime?.id === draft.id
+      ? {
+          lat: vehicleRuntime.lat,
+          lng: vehicleRuntime.lng,
+          route: vehicleRuntime.route,
+          routeSegment: vehicleRuntime.routeSegment,
+          routeProgress: vehicleRuntime.routeProgress,
+          heading: vehicleRuntime.status === 'moving' ? vehicleRuntime.heading : draft.heading,
+          status: statusEdited ? draft.status : vehicleRuntime.status,
+        }
+      : {};
+    void onSave({
+      ...draft,
+      ...liveRoute,
+      name: draft.name.trim(),
+      driver: draft.driver.trim(),
+      routeSpeed: Math.min(500, Math.max(1, draft.routeSpeed)),
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   function requestDelete() {
@@ -130,6 +173,26 @@ export function EditorPanel({
     setDraft((current) => current.kind === 'person'
       ? { ...current, personnel: [...current.personnel, newPersonnelEntry()] }
       : current);
+  }
+
+  function beginRoute() {
+    if (draft.kind !== 'vehicle') return;
+    setStatusEdited(false);
+    onBeginRoute(draft.id, Math.min(500, Math.max(1, draft.routeSpeed)));
+  }
+
+  function toggleVehicleMotion() {
+    if (draft.kind !== 'vehicle') return;
+    setStatusEdited(false);
+    onToggleVehicleMotion(draft.id, Math.min(500, Math.max(1, draft.routeSpeed)));
+  }
+
+  function clearVehicleRoute() {
+    if (draft.kind !== 'vehicle') return;
+    if (window.confirm('Удалить сохранённый маршрут этой машины?')) {
+      setStatusEdited(false);
+      onClearVehicleRoute(draft.id);
+    }
   }
 
   return (
@@ -244,8 +307,11 @@ export function EditorPanel({
             <label>
               <span className="field-label">Статус</span>
               <select
-                value={draft.status}
-                onChange={(event) => setDraft({ ...draft, status: event.target.value as VehicleStatus })}
+                value={statusEdited ? draft.status : (vehicleRuntime?.status ?? draft.status)}
+                onChange={(event) => {
+                  setStatusEdited(true);
+                  setDraft({ ...draft, status: event.target.value as VehicleStatus });
+                }}
               >
                 {vehicleStatuses.map((status) => (
                   <option key={status.value} value={status.value}>{status.label}</option>
@@ -256,12 +322,12 @@ export function EditorPanel({
             <div className="heading-control">
               <div className="heading-copy">
                 <span className="field-label">Направление движения</span>
-                <strong>{Math.round(draft.heading)}°</strong>
+                <strong>{Math.round(displayedHeading)}°{automaticHeading ? ' · авто' : ''}</strong>
               </div>
               <div className="heading-row">
                 <div className="compass-preview" aria-hidden="true">
                   <span>С</span>
-                  <Navigation size={24} fill="currentColor" style={{ transform: `rotate(${draft.heading}deg)` }} />
+                  <Navigation size={24} fill="currentColor" style={{ transform: `rotate(${displayedHeading}deg)` }} />
                 </div>
                 <input
                   className="range-input"
@@ -269,8 +335,9 @@ export function EditorPanel({
                   min="0"
                   max="359"
                   step="1"
-                  value={draft.heading}
+                  value={displayedHeading}
                   aria-label="Направление в градусах"
+                  disabled={automaticHeading}
                   onChange={(event) => setDraft({ ...draft, heading: Number(event.target.value) })}
                 />
                 <input
@@ -278,8 +345,9 @@ export function EditorPanel({
                   type="number"
                   min="0"
                   max="359"
-                  value={draft.heading}
+                  value={displayedHeading}
                   aria-label="Направление числом"
+                  disabled={automaticHeading}
                   onChange={(event) => {
                     const value = Number(event.target.value);
                     setDraft({ ...draft, heading: Number.isFinite(value) ? Math.min(359, Math.max(0, value)) : 0 });
@@ -290,6 +358,74 @@ export function EditorPanel({
                 <span>Север 0°</span><span>Восток 90°</span><span>Юг 180°</span><span>Запад 270°</span>
               </div>
             </div>
+
+            <label className="vehicle-speed-field">
+              <span className="field-label">Скорость движения</span>
+              <span className="speed-input-wrap">
+                <input
+                  type="number"
+                  min="1"
+                  max="500"
+                  step="1"
+                  value={draft.routeSpeed}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    setDraft({
+                      ...draft,
+                      routeSpeed: Number.isFinite(value) ? Math.min(500, Math.max(1, value)) : 1,
+                    });
+                  }}
+                />
+                <span>км/ч</span>
+              </span>
+              <small>Анимация ускорена: 1 секунда соответствует 1 минуте пути</small>
+            </label>
+
+            <section className={`vehicle-route-card ${hasRoute ? 'has-route' : ''} ${routeBuilding ? 'is-building' : ''}`}>
+              <div className="vehicle-route-heading">
+                <span><Route size={18} /></span>
+                <div>
+                  <strong>Маршрут машины</strong>
+                  <small>
+                    {routeBuilding
+                      ? 'Отмечайте следующие точки на карте'
+                      : hasRoute && routeVehicle
+                        ? `${routeVehicle.route.length} точек · ${routeVehicle.status === 'moving' ? 'машина движется' : routeFinished ? 'маршрут завершён' : 'движение приостановлено'}`
+                        : 'Путь ещё не задан'}
+                  </small>
+                </div>
+              </div>
+
+              {editor.mode === 'edit' ? (
+                <div className="vehicle-route-actions">
+                  <button
+                    className="route-build-button"
+                    type="button"
+                    onClick={beginRoute}
+                    disabled={routeBuilding}
+                  >
+                    <Route size={16} />
+                    {routeBuilding ? 'Маршрут строится…' : hasRoute ? 'Изменить маршрут' : 'Задать маршрут'}
+                  </button>
+                  {hasRoute && routeVehicle && !routeBuilding && (
+                    <>
+                      <button className="route-motion-button" type="button" onClick={toggleVehicleMotion}>
+                        {routeVehicle.status === 'moving'
+                          ? <><Pause size={16} /> Приостановить</>
+                          : routeFinished
+                            ? <><RotateCcw size={16} /> Повторить маршрут</>
+                            : <><Play size={16} /> Продолжить движение</>}
+                      </button>
+                      <button className="route-clear-button" type="button" onClick={clearVehicleRoute}>
+                        <Trash2 size={15} /> Удалить маршрут
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <p className="route-save-hint">Сначала добавьте машину на карту, затем откройте её редактор и задайте маршрут.</p>
+              )}
+            </section>
           </>
         )}
 

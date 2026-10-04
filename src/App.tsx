@@ -24,6 +24,8 @@ import {
   itemTitle,
   loadItems,
   makeDraft,
+  MAP_HEIGHT,
+  MAP_WIDTH,
   STORAGE_KEY,
 } from './data';
 import { useExcelWorkbook } from './hooks/useExcelWorkbook';
@@ -33,7 +35,103 @@ import type {
   ItemKind,
   MapItem,
   PersonPoint,
+  RoutePoint,
+  VehiclePoint,
+  VehicleStatus,
 } from './types';
+
+interface RouteBuilderState {
+  vehicleId: string;
+  points: RoutePoint[];
+  speed: number;
+  previousStatus: VehicleStatus;
+}
+
+const MAP_MIN_LONGITUDE = 21.5;
+const MAP_MAX_LONGITUDE = 49;
+const MAP_MIN_LATITUDE = 41.5;
+const MAP_MAX_LATITUDE = 54;
+const KILOMETRES_PER_LATITUDE_DEGREE = 111.32;
+// Для наглядности одна реальная секунда показывает одну минуту движения машины.
+const SIMULATION_TIME_SCALE = 60;
+
+function routeSegmentMetrics(from: RoutePoint, to: RoutePoint) {
+  const latitude = MAP_MIN_LATITUDE
+    + ((from.lat + to.lat) / 2 / MAP_HEIGHT) * (MAP_MAX_LATITUDE - MAP_MIN_LATITUDE);
+  const northKm = ((to.lat - from.lat) / MAP_HEIGHT)
+    * (MAP_MAX_LATITUDE - MAP_MIN_LATITUDE)
+    * KILOMETRES_PER_LATITUDE_DEGREE;
+  const eastKm = ((to.lng - from.lng) / MAP_WIDTH)
+    * (MAP_MAX_LONGITUDE - MAP_MIN_LONGITUDE)
+    * KILOMETRES_PER_LATITUDE_DEGREE
+    * Math.cos(latitude * Math.PI / 180);
+  return {
+    distance: Math.hypot(northKm, eastKm),
+    heading: (Math.atan2(eastKm, northKm) * 180 / Math.PI + 360) % 360,
+  };
+}
+
+function advanceVehicle(vehicle: VehiclePoint, elapsedSeconds: number): VehiclePoint {
+  if (vehicle.status !== 'moving' || vehicle.route.length < 2) return vehicle;
+
+  const finalIndex = vehicle.route.length - 1;
+  let segment = Math.min(Math.max(0, vehicle.routeSegment), finalIndex);
+  let progress = Math.min(1, Math.max(0, vehicle.routeProgress));
+  let distanceToTravel = Math.max(0, vehicle.routeSpeed)
+    * elapsedSeconds
+    * SIMULATION_TIME_SCALE
+    / 3600;
+  let lat = vehicle.lat;
+  let lng = vehicle.lng;
+  let heading = vehicle.heading;
+
+  while (segment < finalIndex) {
+    const from = vehicle.route[segment];
+    const to = vehicle.route[segment + 1];
+    const metrics = routeSegmentMetrics(from, to);
+    heading = metrics.heading;
+
+    if (metrics.distance < 0.0001) {
+      segment += 1;
+      progress = 0;
+      lat = to.lat;
+      lng = to.lng;
+      continue;
+    }
+
+    const remainingDistance = metrics.distance * (1 - progress);
+    if (distanceToTravel < remainingDistance) {
+      progress += distanceToTravel / metrics.distance;
+      lat = from.lat + (to.lat - from.lat) * progress;
+      lng = from.lng + (to.lng - from.lng) * progress;
+      distanceToTravel = 0;
+      break;
+    }
+
+    distanceToTravel -= remainingDistance;
+    segment += 1;
+    progress = 0;
+    lat = to.lat;
+    lng = to.lng;
+  }
+
+  const finished = segment >= finalIndex;
+  const finalPoint = vehicle.route[finalIndex];
+  return {
+    ...vehicle,
+    lat: finished ? finalPoint.lat : lat,
+    lng: finished ? finalPoint.lng : lng,
+    heading,
+    routeSegment: segment,
+    routeProgress: finished ? 0 : progress,
+    status: finished ? 'parked' : 'moving',
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function routePointsDiffer(left: RoutePoint, right: RoutePoint): boolean {
+  return Math.hypot(left.lat - right.lat, left.lng - right.lng) >= 1;
+}
 
 export default function App() {
   const [items, setItems] = useState<MapItem[]>(loadItems);
@@ -41,6 +139,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [placement, setPlacement] = useState<ItemKind | null>(null);
+  const [routeBuilder, setRouteBuilder] = useState<RouteBuilderState | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [adminName, setAdminName] = useState<string | null>(() =>
     sessionStorage.getItem(SESSION_KEY),
@@ -56,6 +155,32 @@ export default function App() {
     () => items.filter((item): item is PersonPoint => item.kind === 'person'),
     [items],
   );
+  const hasMovingVehicles = items.some((item) =>
+    item.kind === 'vehicle'
+    && item.status === 'moving'
+    && item.route.length > 1,
+  );
+
+  useEffect(() => {
+    if (!hasMovingVehicles) return;
+    let previousTime = performance.now();
+    const timer = window.setInterval(() => {
+      const currentTime = performance.now();
+      const elapsedSeconds = Math.min(0.5, Math.max(0, (currentTime - previousTime) / 1000));
+      previousTime = currentTime;
+      setItems((current) => {
+        let changed = false;
+        const advanced = current.map((item) => {
+          if (item.kind !== 'vehicle') return item;
+          const next = advanceVehicle(item, elapsedSeconds);
+          if (next !== item) changed = true;
+          return next;
+        });
+        return changed ? advanced : current;
+      });
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [hasMovingVehicles]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
@@ -84,6 +209,24 @@ export default function App() {
     () => filteredItems.find((item) => item.id === focusedId) ?? null,
     [filteredItems, focusedId],
   );
+  const editorVehicleRuntime = useMemo(() => {
+    if (!editor || editor.item.kind !== 'vehicle') return undefined;
+    return items.find((item): item is VehiclePoint =>
+      item.id === editor.item.id && item.kind === 'vehicle',
+    );
+  }, [editor, items]);
+
+  function cancelRouteBuilder(showToast = true) {
+    if (!routeBuilder) return;
+    const { vehicleId, previousStatus } = routeBuilder;
+    setItems((current) => current.map((item) =>
+      item.id === vehicleId && item.kind === 'vehicle'
+        ? { ...item, status: previousStatus, updatedAt: new Date().toISOString() }
+        : item,
+    ));
+    setRouteBuilder(null);
+    if (showToast) setToast('Построение маршрута отменено');
+  }
 
   function startPlacement(kind: ItemKind) {
     if (!isAdmin) {
@@ -95,13 +238,24 @@ export default function App() {
       setWorkbookModalOpen(true);
       return;
     }
+    if (routeBuilder) cancelRouteBuilder(false);
     setEditor(null);
     setFocusedId(null);
     setPlacement((current) => (current === kind ? null : kind));
   }
 
   function handlePlace(lat: number, lng: number) {
-    if (!placement || !isAdmin) return;
+    if (!isAdmin) return;
+    if (routeBuilder) {
+      setRouteBuilder((current) => {
+        if (!current || current.points.length >= 100) return current;
+        const lastPoint = current.points[current.points.length - 1];
+        if (!routePointsDiffer(lastPoint, { lat, lng })) return current;
+        return { ...current, points: [...current.points, { lat, lng }] };
+      });
+      return;
+    }
+    if (!placement) return;
     const draft = makeDraft(placement, lat, lng);
     setEditor({ mode: 'create', item: draft });
     setPlacement(null);
@@ -109,6 +263,10 @@ export default function App() {
 
   function handleEdit(item: MapItem) {
     if (!isAdmin) return;
+    if (routeBuilder && routeBuilder.vehicleId !== item.id) {
+      setToast('Сначала завершите или отмените построение маршрута');
+      return;
+    }
     if (item.kind === 'person' && !excel.isConnected) {
       setToast('Чтобы изменить точку, снова привяжите Excel-книгу');
       setWorkbookModalOpen(true);
@@ -154,11 +312,136 @@ export default function App() {
       : 'Изменения сохранены');
   }
 
+  function beginVehicleRoute(id: string, speed: number) {
+    const vehicle = items.find((item): item is VehiclePoint =>
+      item.id === id && item.kind === 'vehicle',
+    );
+    if (!vehicle) return;
+    if (routeBuilder) {
+      if (routeBuilder.vehicleId !== id) {
+        setToast('Сначала завершите или отмените текущий маршрут');
+      }
+      return;
+    }
+
+    const normalizedSpeed = Math.min(500, Math.max(1, speed));
+    setItems((current) => current.map((item) =>
+      item.id === id && item.kind === 'vehicle'
+        ? { ...item, status: 'parked', updatedAt: new Date().toISOString() }
+        : item,
+    ));
+    setRouteBuilder({
+      vehicleId: id,
+      points: [{ lat: vehicle.lat, lng: vehicle.lng }],
+      speed: normalizedSpeed,
+      previousStatus: vehicle.status,
+    });
+    setPlacement(null);
+    setFilter('all');
+    setSearch('');
+    setFocusedId(id);
+    setToast('Отмечайте точки маршрута последовательными нажатиями на карту');
+  }
+
+  function undoRoutePoint() {
+    setRouteBuilder((current) => {
+      if (!current || current.points.length <= 1) return current;
+      return { ...current, points: current.points.slice(0, -1) };
+    });
+  }
+
+  function startVehicleRoute() {
+    if (!routeBuilder || routeBuilder.points.length < 2) return;
+    const { vehicleId, points, speed } = routeBuilder;
+    const heading = routeSegmentMetrics(points[0], points[1]).heading;
+    setItems((current) => current.map((item) =>
+      item.id === vehicleId && item.kind === 'vehicle'
+        ? {
+            ...item,
+            lat: points[0].lat,
+            lng: points[0].lng,
+            heading,
+            status: 'moving',
+            route: points,
+            routeSegment: 0,
+            routeProgress: 0,
+            routeSpeed: speed,
+            updatedAt: new Date().toISOString(),
+          }
+        : item,
+    ));
+    setRouteBuilder(null);
+    setToast('Маршрут сохранён · машина начала движение');
+  }
+
+  function toggleVehicleMotion(id: string, speed: number) {
+    const vehicle = items.find((item): item is VehiclePoint =>
+      item.id === id && item.kind === 'vehicle',
+    );
+    if (!vehicle || vehicle.route.length < 2) return;
+    const finished = vehicle.routeSegment >= vehicle.route.length - 1;
+    const normalizedSpeed = Math.min(500, Math.max(1, speed));
+
+    setItems((current) => current.map((item) => {
+      if (item.id !== id || item.kind !== 'vehicle' || item.route.length < 2) return item;
+      if (item.status === 'moving') {
+        return {
+          ...item,
+          status: 'parked',
+          routeSpeed: normalizedSpeed,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      const currentFinished = item.routeSegment >= item.route.length - 1;
+      if (currentFinished) {
+        const firstPoint = item.route[0];
+        return {
+          ...item,
+          lat: firstPoint.lat,
+          lng: firstPoint.lng,
+          heading: routeSegmentMetrics(item.route[0], item.route[1]).heading,
+          status: 'moving',
+          routeSegment: 0,
+          routeSpeed: normalizedSpeed,
+          routeProgress: 0,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return {
+        ...item,
+        heading: routeSegmentMetrics(item.route[item.routeSegment], item.route[item.routeSegment + 1]).heading,
+        status: 'moving',
+        routeSpeed: normalizedSpeed,
+        updatedAt: new Date().toISOString(),
+      };
+    }));
+    setToast(vehicle.status === 'moving'
+      ? 'Движение машины приостановлено'
+      : finished ? 'Машина начала маршрут заново' : 'Движение машины продолжено');
+  }
+
+  function clearVehicleRoute(id: string) {
+    setItems((current) => current.map((item) =>
+      item.id === id && item.kind === 'vehicle'
+        ? {
+            ...item,
+            status: 'parked',
+            route: [],
+            routeSegment: 0,
+            routeProgress: 0,
+            updatedAt: new Date().toISOString(),
+          }
+        : item,
+    ));
+    setToast('Маршрут машины удалён');
+  }
+
   function openWorkbook() {
     if (!isAdmin) {
       setAdminModalOpen(true);
       return;
     }
+    if (routeBuilder) cancelRouteBuilder(false);
     setPlacement(null);
     setEditor(null);
     setToast('');
@@ -194,6 +477,7 @@ export default function App() {
     }
 
     setItems(remainingItems);
+    if (routeBuilder?.vehicleId === id) setRouteBuilder(null);
     if (focusedId === id) setFocusedId(null);
     setEditor(null);
     setToast(target.kind === 'person' && target.excelId
@@ -203,9 +487,26 @@ export default function App() {
 
   function handleMove(id: string, lat: number, lng: number) {
     const updatedAt = new Date().toISOString();
-    const updatedItems = items.map((item) =>
-      item.id === id ? { ...item, lat, lng, updatedAt } : item,
-    );
+    const updatedItems = items.map((item) => {
+      if (item.id !== id) return item;
+      if (item.kind === 'person') return { ...item, lat, lng, updatedAt };
+
+      const remainingRoute = item.route.length > 1
+        ? item.route.slice(Math.min(item.routeSegment + 1, item.route.length))
+        : [];
+      const route = remainingRoute.length > 0 ? [{ lat, lng }, ...remainingRoute] : [];
+      return {
+        ...item,
+        lat,
+        lng,
+        status: 'parked' as const,
+        route,
+        routeSegment: 0,
+        routeProgress: 0,
+        heading: route.length > 1 ? routeSegmentMetrics(route[0], route[1]).heading : item.heading,
+        updatedAt,
+      };
+    });
     setItems(updatedItems);
     setEditor((current) => current?.item.id === id
       ? { ...current, item: { ...current.item, lat, lng, updatedAt } }
@@ -224,6 +525,7 @@ export default function App() {
   function logout() {
     sessionStorage.removeItem(SESSION_KEY);
     excel.disconnect();
+    if (routeBuilder) cancelRouteBuilder(false);
     setAdminName(null);
     setPlacement(null);
     setEditor(null);
@@ -326,11 +628,16 @@ export default function App() {
             items={filteredItems}
             focusedItem={visibleFocusedItem}
             placement={placement}
+            routeDraft={routeBuilder?.points ?? null}
+            routeVehicleId={routeBuilder?.vehicleId ?? null}
             isAdmin={isAdmin}
             excelConnected={excel.isConnected}
             onPlace={handlePlace}
             onEdit={handleEdit}
             onMove={handleMove}
+            onUndoRoutePoint={undoRoutePoint}
+            onCancelRoute={() => cancelRouteBuilder()}
+            onStartRoute={startVehicleRoute}
           />
 
           {editor && (
@@ -338,9 +645,14 @@ export default function App() {
               editor={editor}
               excelConnected={excel.isConnected}
               saving={excel.state.status === 'saving'}
+              vehicleRuntime={editorVehicleRuntime}
+              routeBuilding={routeBuilder?.vehicleId === editor.item.id}
               onCancel={() => setEditor(null)}
               onSave={handleSave}
               onDelete={(id) => void handleDelete(id)}
+              onBeginRoute={beginVehicleRoute}
+              onToggleVehicleMotion={toggleVehicleMotion}
+              onClearVehicleRoute={clearVehicleRoute}
             />
           )}
         </section>

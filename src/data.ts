@@ -2,7 +2,9 @@ import type {
   MapItem,
   PersonnelEntry,
   PersonPoint,
+  RoutePoint,
   VehiclePoint,
+  VehicleStatus,
 } from './types';
 
 export const MAP_WIDTH = 1600;
@@ -55,6 +57,10 @@ export const seedItems: MapItem[] = [
     driver: 'Сергей Волков',
     status: 'moving',
     heading: 48,
+    route: [],
+    routeSegment: 0,
+    routeProgress: 0,
+    routeSpeed: 60,
     lat: 360,
     lng: 950,
     createdAt: now,
@@ -67,6 +73,10 @@ export const seedItems: MapItem[] = [
     driver: 'Алексей Морозов',
     status: 'parked',
     heading: 180,
+    route: [],
+    routeSegment: 0,
+    routeProgress: 0,
+    routeSpeed: 60,
     lat: 280,
     lng: 1360,
     createdAt: now,
@@ -118,6 +128,58 @@ function normalizePoint(value: Record<string, unknown>): PersonPoint {
   };
 }
 
+const VEHICLE_STATUSES: VehicleStatus[] = ['moving', 'parked', 'service'];
+
+function normalizeRoutePoint(value: unknown): RoutePoint | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<RoutePoint>;
+  if (!Number.isFinite(candidate.lat) || !Number.isFinite(candidate.lng)) return null;
+  return {
+    lat: Math.min(MAP_HEIGHT, Math.max(0, Number(candidate.lat))),
+    lng: Math.min(MAP_WIDTH, Math.max(0, Number(candidate.lng))),
+  };
+}
+
+function normalizeVehicle(value: Record<string, unknown>): VehiclePoint {
+  const route = Array.isArray(value.route)
+    ? value.route.map(normalizeRoutePoint).filter((point): point is RoutePoint => point !== null)
+    : [];
+  const rawSegment = Number(value.routeSegment);
+  const rawProgress = Number(value.routeProgress);
+  const rawSpeed = Number(value.routeSpeed);
+  const status = String(value.status) as VehicleStatus;
+  const routeSegment = Math.min(
+    Math.max(0, Math.floor(Number.isFinite(rawSegment) ? rawSegment : 0)),
+    Math.max(0, route.length - 1),
+  );
+  const normalizedStatus = VEHICLE_STATUSES.includes(status) ? status : 'parked';
+
+  return {
+    id: String(value.id ?? crypto.randomUUID?.() ?? `vehicle-${Date.now()}`),
+    kind: 'vehicle',
+    name: String(value.name ?? ''),
+    driver: String(value.driver ?? ''),
+    status: normalizedStatus === 'moving' && route.length > 1 && routeSegment >= route.length - 1
+      ? 'parked'
+      : normalizedStatus,
+    heading: Number.isFinite(Number(value.heading))
+      ? ((Number(value.heading) % 360) + 360) % 360
+      : 0,
+    route,
+    routeSegment,
+    routeProgress: Math.min(1, Math.max(0, Number.isFinite(rawProgress) ? rawProgress : 0)),
+    routeSpeed: Math.min(500, Math.max(1, Number.isFinite(rawSpeed) ? rawSpeed : 60)),
+    lat: Number.isFinite(Number(value.lat))
+      ? Math.min(MAP_HEIGHT, Math.max(0, Number(value.lat)))
+      : MAP_HEIGHT / 2,
+    lng: Number.isFinite(Number(value.lng))
+      ? Math.min(MAP_WIDTH, Math.max(0, Number(value.lng)))
+      : MAP_WIDTH / 2,
+    createdAt: String(value.createdAt ?? new Date().toISOString()),
+    updatedAt: String(value.updatedAt ?? new Date().toISOString()),
+  };
+}
+
 export function loadItems(): MapItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -127,7 +189,7 @@ export function loadItems(): MapItem[] {
 
     return parsed
       .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
-      .map((item) => (item.kind === 'person' ? normalizePoint(item) : item as unknown as VehiclePoint));
+      .map((item) => (item.kind === 'person' ? normalizePoint(item) : normalizeVehicle(item)));
   } catch {
     return seedItems;
   }
@@ -162,6 +224,10 @@ export function makeDraft(kind: 'person' | 'vehicle', lat: number, lng: number):
     driver: '',
     status: 'parked',
     heading: 0,
+    route: [],
+    routeSegment: 0,
+    routeProgress: 0,
+    routeSpeed: 60,
   };
 }
 

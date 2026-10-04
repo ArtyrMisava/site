@@ -1,17 +1,35 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import L, { type LeafletEventHandlerFnMap } from 'leaflet';
 import {
+  CircleMarker,
   ImageOverlay,
   MapContainer,
   Marker,
   Pane,
+  Polyline,
   Tooltip,
   useMap,
   useMapEvents,
 } from 'react-leaflet';
-import { Fullscreen, Maximize2, Minimize2, Minus, Plus } from 'lucide-react';
+import {
+  Fullscreen,
+  Maximize2,
+  Minimize2,
+  Minus,
+  Play,
+  Plus,
+  Route,
+  Undo2,
+  X,
+} from 'lucide-react';
 import { MAP_HEIGHT, MAP_WIDTH } from '../data';
-import type { ItemKind, MapItem, PersonPoint, VehiclePoint } from '../types';
+import type {
+  ItemKind,
+  MapItem,
+  PersonPoint,
+  RoutePoint,
+  VehiclePoint,
+} from '../types';
 
 const MAP_BOUNDS = L.latLngBounds(
   [0, 0],
@@ -22,11 +40,16 @@ interface MapViewProps {
   items: MapItem[];
   focusedItem: MapItem | null;
   placement: ItemKind | null;
+  routeDraft: RoutePoint[] | null;
+  routeVehicleId: string | null;
   isAdmin: boolean;
   excelConnected: boolean;
   onPlace: (lat: number, lng: number) => void;
   onEdit: (item: MapItem) => void;
   onMove: (id: string, lat: number, lng: number) => void;
+  onUndoRoutePoint: () => void;
+  onCancelRoute: () => void;
+  onStartRoute: () => void;
 }
 
 interface MapPlace {
@@ -109,7 +132,7 @@ function markerIcon(item: MapItem, focused: boolean): L.DivIcon {
 
   const statusClass = escapeHtml(item.status);
   return L.divIcon({
-    className: 'leaflet-object-icon',
+    className: 'leaflet-object-icon leaflet-vehicle-icon',
     iconSize: [96, 96],
     iconAnchor: [48, 48],
     tooltipAnchor: [0, -33],
@@ -182,6 +205,8 @@ function ObjectTooltip({ item }: { item: MapItem }) {
           <tr><th>Водитель</th><td>{item.driver || 'Не указан'}</td></tr>
           <tr><th>Статус</th><td>{vehicleStatus(item.status)}</td></tr>
           <tr><th>Курс</th><td>{Math.round(item.heading)}°</td></tr>
+          {item.route.length > 1 && <tr><th>Маршрут</th><td>{item.route.length} точек</td></tr>}
+          {item.route.length > 1 && <tr><th>Скорость</th><td>{Math.round(item.routeSpeed)} км/ч</td></tr>}
         </tbody>
       </table>
     </div>
@@ -290,9 +315,15 @@ function FitMapOnStart() {
 
 function FocusController({ item }: { item: MapItem | null }) {
   const map = useMap();
+  const lastFocusedId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!item) return;
+    if (!item) {
+      lastFocusedId.current = null;
+      return;
+    }
+    if (lastFocusedId.current === item.id) return;
+    lastFocusedId.current = item.id;
     map.flyTo([item.lat, item.lng], Math.max(map.getZoom(), 0.35), {
       animate: true,
       duration: 0.65,
@@ -396,15 +427,133 @@ function MapControls() {
   );
 }
 
+function routePositions(route: RoutePoint[]): Array<[number, number]> {
+  return route.map((point) => [point.lat, point.lng]);
+}
+
+function VehicleRoutes({
+  items,
+  focusedId,
+  routeDraft,
+  routeVehicleId,
+}: {
+  items: MapItem[];
+  focusedId: string | null;
+  routeDraft: RoutePoint[] | null;
+  routeVehicleId: string | null;
+}) {
+  const vehicles = items.filter((item): item is VehiclePoint =>
+    item.kind === 'vehicle' && item.route.length > 1 && item.id !== routeVehicleId,
+  );
+
+  return (
+    <Pane name="vehicle-routes" style={{ zIndex: 430, pointerEvents: 'none' }}>
+      {vehicles.map((vehicle) => (
+        <Polyline
+          key={`${vehicle.id}-outline`}
+          positions={routePositions(vehicle.route)}
+          interactive={false}
+          pathOptions={{
+            color: '#ffffff',
+            weight: vehicle.id === focusedId ? 8 : 7,
+            opacity: 0.78,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }}
+        />
+      ))}
+      {vehicles.map((vehicle) => (
+        <Polyline
+          key={vehicle.id}
+          positions={routePositions(vehicle.route)}
+          interactive={false}
+          pathOptions={{
+            color: vehicle.id === focusedId ? '#006b92' : '#217d9a',
+            weight: vehicle.id === focusedId ? 5 : 4,
+            opacity: vehicle.id === focusedId ? 0.96 : 0.8,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }}
+        />
+      ))}
+      {vehicles.map((vehicle) => (
+        <CircleMarker
+          key={`${vehicle.id}-destination`}
+          center={[
+            vehicle.route[vehicle.route.length - 1].lat,
+            vehicle.route[vehicle.route.length - 1].lng,
+          ]}
+          radius={vehicle.id === focusedId ? 6 : 5}
+          interactive={false}
+          pathOptions={{
+            color: '#ffffff',
+            weight: 2,
+            fillColor: '#217d9a',
+            fillOpacity: 1,
+          }}
+        />
+      ))}
+
+      {routeDraft && (
+        <>
+          {routeDraft.length > 1 && (
+            <>
+              <Polyline
+                positions={routePositions(routeDraft)}
+                interactive={false}
+                pathOptions={{
+                  color: '#ffffff',
+                  weight: 8,
+                  opacity: 0.82,
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                }}
+              />
+              <Polyline
+                positions={routePositions(routeDraft)}
+                interactive={false}
+                pathOptions={{
+                  color: '#0879a4',
+                  weight: 5,
+                  opacity: 0.98,
+                  dashArray: '10 8',
+                  lineCap: 'round',
+                  lineJoin: 'round',
+                }}
+              />
+            </>
+          )}
+          {routeDraft.map((point, index) => (
+            <CircleMarker
+              key={`${index}-${point.lat}-${point.lng}`}
+              center={[point.lat, point.lng]}
+              radius={index === 0 ? 7 : 6}
+              interactive={false}
+              pathOptions={{
+                color: '#ffffff',
+                weight: 2,
+                fillColor: index === 0 ? '#15835d' : '#0879a4',
+                fillOpacity: 1,
+              }}
+            />
+          ))}
+        </>
+      )}
+    </Pane>
+  );
+}
+
 function MapObject({
   item,
   focused,
+  editable,
   draggable,
   onEdit,
   onMove,
 }: {
   item: MapItem;
   focused: boolean;
+  editable: boolean;
   draggable: boolean;
   onEdit: (item: MapItem) => void;
   onMove: (id: string, lat: number, lng: number) => void;
@@ -414,7 +563,7 @@ function MapObject({
   const eventHandlers = useMemo<LeafletEventHandlerFnMap>(
     () => ({
       click(event) {
-        if (draggable) {
+        if (editable) {
           L.DomEvent.stopPropagation(event.originalEvent);
           onEdit(item);
         }
@@ -435,7 +584,7 @@ function MapObject({
         );
       },
     }),
-    [draggable, item, onEdit, onMove],
+    [draggable, editable, item, onEdit, onMove],
   );
 
   return (
@@ -459,18 +608,66 @@ function MapObject({
   );
 }
 
+function RouteBuilderPanel({
+  vehicleName,
+  pointCount,
+  onUndo,
+  onCancel,
+  onStart,
+}: {
+  vehicleName: string;
+  pointCount: number;
+  onUndo: () => void;
+  onCancel: () => void;
+  onStart: () => void;
+}) {
+  return (
+    <div className="route-builder-panel" role="dialog" aria-label={`Построение маршрута машины ${vehicleName}`}>
+      <div className="route-builder-icon"><Route size={20} /></div>
+      <div className="route-builder-copy">
+        <strong>Маршрут: {vehicleName}</strong>
+        <span>
+          {pointCount > 1
+            ? `Добавлено остановок: ${pointCount - 1}. Можно продолжить маршрут или запустить движение.`
+            : 'Первая точка — положение машины. Нажимайте на карту, чтобы проложить путь.'}
+        </span>
+      </div>
+      <div className="route-builder-actions">
+        <button type="button" onClick={onUndo} disabled={pointCount <= 1} title="Удалить последнюю точку">
+          <Undo2 size={16} /> <span>Назад</span>
+        </button>
+        <button className="route-builder-cancel" type="button" onClick={onCancel}>
+          <X size={16} /> <span>Отмена</span>
+        </button>
+        <button className="route-builder-start" type="button" onClick={onStart} disabled={pointCount <= 1}>
+          <Play size={16} fill="currentColor" /> <span>Запустить</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function MapView({
   items,
   focusedItem,
   placement,
+  routeDraft,
+  routeVehicleId,
   isAdmin,
   excelConnected,
   onPlace,
   onEdit,
   onMove,
+  onUndoRoutePoint,
+  onCancelRoute,
+  onStartRoute,
 }: MapViewProps) {
+  const routeVehicle = routeVehicleId
+    ? items.find((item): item is VehiclePoint => item.id === routeVehicleId && item.kind === 'vehicle')
+    : null;
+
   return (
-    <div className={`map-wrap ${placement ? 'is-placing' : ''}`}>
+    <div className={`map-wrap ${placement ? 'is-placing' : ''} ${routeDraft ? 'is-routing' : ''}`}>
       <MapContainer
         className="company-map"
         crs={L.CRS.Simple}
@@ -488,18 +685,32 @@ export function MapView({
         preferCanvas={false}
       >
         <OfflineMapLayers />
+        <VehicleRoutes
+          items={items}
+          focusedId={focusedItem?.id ?? null}
+          routeDraft={routeDraft}
+          routeVehicleId={routeVehicleId}
+        />
         <FitMapOnStart />
         <FocusController item={focusedItem} />
-        <PlacementHandler enabled={placement !== null} onPlace={onPlace} />
+        <PlacementHandler enabled={placement !== null || routeDraft !== null} onPlace={onPlace} />
         {items.map((item) => (
           <MapObject
             key={item.id}
             item={item}
             focused={item.id === focusedItem?.id}
+            editable={
+              isAdmin
+              && placement === null
+              && routeDraft === null
+              && (item.kind === 'vehicle' || excelConnected)
+            }
             draggable={
-              isAdmin &&
-              placement === null &&
-              (item.kind === 'vehicle' || excelConnected)
+              isAdmin
+              && placement === null
+              && routeDraft === null
+              && (item.kind === 'vehicle' || excelConnected)
+              && !(item.kind === 'vehicle' && item.status === 'moving' && item.route.length > 1)
             }
             onEdit={onEdit}
             onMove={onMove}
@@ -508,10 +719,15 @@ export function MapView({
         <MapControls />
       </MapContainer>
 
-      <div className="map-demo-label">
-        <span>Расширенная карта</span>
-        <small>детализация при приближении · офлайн</small>
-      </div>
+      {routeDraft && (
+        <RouteBuilderPanel
+          vehicleName={routeVehicle?.name || 'машина'}
+          pointCount={routeDraft.length}
+          onUndo={onUndoRoutePoint}
+          onCancel={onCancelRoute}
+          onStart={onStartRoute}
+        />
+      )}
       <div className="map-legend" aria-label="Условные обозначения">
         <span><i className="legend-dot person" /> Точка</span>
         <span><i className="legend-dot vehicle" /> Машина</span>
