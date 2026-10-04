@@ -319,7 +319,7 @@ export function MapView({
         attributionControl={false}
         preferCanvas={false}
       >
-        <ImageOverlay url="/maps/demo-city.svg" bounds={MAP_BOUNDS} />
+        <ImageOverlay url="/maps/real-region.svg" bounds={MAP_BOUNDS} />
         <FitMapOnStart />
         <FocusController item={focusedItem} />
         <PlacementHandler enabled={placement !== null} onPlace={onPlace} />
@@ -341,8 +341,8 @@ export function MapView({
       </MapContainer>
 
       <div className="map-demo-label">
-        <span>Демо-карта</span>
-        <small>условная городская схема · офлайн</small>
+        <span>Реальная карта</span>
+        <small>Natural Earth · полностью офлайн</small>
       </div>
       <div className="map-legend" aria-label="Условные обозначения">
         <span><i className="legend-dot person" /> Точка</span>
