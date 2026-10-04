@@ -2,31 +2,43 @@
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
+title ДУС - локальная карта
+cls
 
-echo ================================================
-echo   LOKUS - LOCAL COMPANY MAP
-echo ================================================
+color 0B
 echo.
+echo             ДДДДД       У     У        ССССС
+echo            Д     Д      У     У       С
+echo            Д     Д      У     У       С
+echo            Д     Д       У   У        С
+echo            Д     Д        У У         С
+echo          ДДДДДДДДД         У           ССССС
+echo          Д       Д        У
+echo.
+echo                 Л О К А Л Ь Н А Я   К А Р Т А
+echo =================================================================
+echo.
+color 07
 
 if not exist "%~dp0offline-site\index.html" (
-  echo ERROR: The offline-site folder is missing.
-  echo Extract the entire ZIP archive before starting the site.
+  echo ОШИБКА: папка offline-site не найдена.
+  echo Полностью распакуйте ZIP-архив перед запуском ДУС.
   echo.
   pause
   exit /b 1
 )
 
-echo Starting the site in your browser...
-echo Keep this window open while you use the site.
-echo To stop the site, press Ctrl+C or close this window.
+echo Запускаем ДУС в браузере...
+echo Не закрывайте это окно во время работы с сайтом.
+echo Для остановки нажмите Ctrl+C или закройте окно.
 echo.
 
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\local-server.ps1" -Root "%~dp0offline-site"
 
 if errorlevel 1 (
   echo.
-  echo The site could not be started.
-  echo See the error above or install Node.js LTS and run npm install.
+  echo Не удалось запустить ДУС.
+  echo Проверьте сообщение об ошибке выше.
   echo.
   pause
 )

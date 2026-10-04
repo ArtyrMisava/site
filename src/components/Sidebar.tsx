@@ -74,7 +74,7 @@ export function Sidebar({
             <span />
           </div>
           <div className="brand-copy">
-            <strong>ЛОКУС</strong>
+            <strong>ДУС</strong>
             <small>внутренняя карта</small>
           </div>
           <button

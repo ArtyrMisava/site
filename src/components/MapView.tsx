@@ -78,11 +78,11 @@ function markerIcon(item: MapItem, focused: boolean): L.DivIcon {
         <span class="marker-proximity"></span>
         <span class="vehicle-direction" style="transform: translate(-50%, -50%) rotate(${item.heading}deg)">
           <span class="direction-tip"></span>
-          <span class="vehicle-pin">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M7.8 3.5h8.4c1.2 0 2.1.8 2.4 1.9l1.1 4.1c.8.4 1.3 1.2 1.3 2.1v5.1c0 .7-.6 1.3-1.3 1.3h-.6v1.4c0 .6-.5 1.1-1.1 1.1h-1.1c-.6 0-1.1-.5-1.1-1.1V18H8.2v1.4c0 .6-.5 1.1-1.1 1.1H6c-.6 0-1.1-.5-1.1-1.1V18h-.6C3.6 18 3 17.4 3 16.7v-5.1c0-.9.5-1.7 1.3-2.1l1.1-4.1c.3-1.1 1.2-1.9 2.4-1.9Zm-.1 2L6.6 9.2h10.8l-1.1-3.7H7.7Zm-.9 6.1a1.55 1.55 0 1 0 0 3.1 1.55 1.55 0 0 0 0-3.1Zm10.4 0a1.55 1.55 0 1 0 0 3.1 1.55 1.55 0 0 0 0-3.1Z"/>
-            </svg>
-          </span>
+        </span>
+        <span class="vehicle-pin">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7.8 3.5h8.4c1.2 0 2.1.8 2.4 1.9l1.1 4.1c.8.4 1.3 1.2 1.3 2.1v5.1c0 .7-.6 1.3-1.3 1.3h-.6v1.4c0 .6-.5 1.1-1.1 1.1h-1.1c-.6 0-1.1-.5-1.1-1.1V18H8.2v1.4c0 .6-.5 1.1-1.1 1.1H6c-.6 0-1.1-.5-1.1-1.1V18h-.6C3.6 18 3 17.4 3 16.7v-5.1c0-.9.5-1.7 1.3-2.1l1.1-4.1c.3-1.1 1.2-1.9 2.4-1.9Zm-.1 2L6.6 9.2h10.8l-1.1-3.7H7.7Zm-.9 6.1a1.55 1.55 0 1 0 0 3.1 1.55 1.55 0 0 0 0-3.1Zm10.4 0a1.55 1.55 0 1 0 0 3.1 1.55 1.55 0 0 0 0-3.1Z"/>
+          </svg>
         </span>
         <span class="marker-caption">${escapeHtml(item.name || 'Новая машина')}</span>
       </div>

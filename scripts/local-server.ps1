@@ -42,8 +42,8 @@ if ($null -eq $listener) {
 }
 
 $url = "http://127.0.0.1:$activePort/"
-Write-Host "Site is running: $url" -ForegroundColor Green
-Write-Host "Press Ctrl+C to stop the local server." -ForegroundColor DarkGray
+Write-Host "ДУС запущен: $url" -ForegroundColor Green
+Write-Host "Для остановки нажмите Ctrl+C." -ForegroundColor DarkGray
 Write-Host ""
 
 # Direct Excel file linking requires the File System Access API.
