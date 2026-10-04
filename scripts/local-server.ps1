@@ -97,21 +97,22 @@ try {
 
             $method = $requestParts[0].ToUpperInvariant()
             $rawPath = $requestParts[1].Split("?")[0]
-            $relativePath = [System.Uri]::UnescapeDataString($rawPath).TrimStart("/")
+            $relativePath = [System.Uri]::UnescapeDataString($rawPath).TrimStart([char]"/")
 
             if ([string]::IsNullOrWhiteSpace($relativePath)) {
                 $relativePath = "index.html"
             }
 
             $relativePath = $relativePath.Replace(
-                "/",
+                [char]"/",
                 [System.IO.Path]::DirectorySeparatorChar
             )
 
-            $rootPrefix = $Root.TrimEnd(
+            $trimCharacters = [char[]]@(
                 [System.IO.Path]::DirectorySeparatorChar,
                 [System.IO.Path]::AltDirectorySeparatorChar
-            ) + [System.IO.Path]::DirectorySeparatorChar
+            )
+            $rootPrefix = $Root.TrimEnd($trimCharacters) + [System.IO.Path]::DirectorySeparatorChar
 
             $fullPath = [System.IO.Path]::GetFullPath(
                 [System.IO.Path]::Combine($Root, $relativePath)
@@ -151,11 +152,13 @@ try {
                 }
             }
 
-            $headers = "HTTP/1.1 $status`r`n" +
-                       "Content-Type: $contentType`r`n" +
-                       "Content-Length: $($body.Length)`r`n" +
-                       "Cache-Control: no-cache`r`n" +
-                       "Connection: close`r`n`r`n"
+            $headers = (
+                "HTTP/1.1 $status`r`n" +
+                "Content-Type: $contentType`r`n" +
+                "Content-Length: $($body.Length)`r`n" +
+                "Cache-Control: no-cache`r`n" +
+                "Connection: close`r`n`r`n"
+            )
 
             $headerBytes = [System.Text.Encoding]::ASCII.GetBytes($headers)
             $stream.Write($headerBytes, 0, $headerBytes.Length)
