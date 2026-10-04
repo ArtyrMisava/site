@@ -150,13 +150,13 @@ function uniqueSheetName(workbook: Workbook, desired: string, current?: Workshee
   return `Точка ${Date.now()}`.slice(0, 31);
 }
 
-function setPersonnelHeaders(worksheet: Worksheet) {
-  worksheet.getCell('A1').value = 'ФИО';
-  worksheet.getCell('B1').value = 'Звание / должность';
+function setPlaceNameRow(worksheet: Worksheet, pointName: string) {
+  worksheet.getCell('A1').value = null;
+  worksheet.getCell('B1').value = pointName;
 }
 
-function applyNewSheetTemplate(worksheet: Worksheet, excelId: string) {
-  setPersonnelHeaders(worksheet);
+function applyNewSheetTemplate(worksheet: Worksheet, pointName: string, excelId: string) {
+  setPlaceNameRow(worksheet, pointName);
   worksheet.getCell(POINT_ID_CELL).value = excelId;
   worksheet.getColumn(26).hidden = true;
   worksheet.getColumn(1).width = 38;
@@ -276,9 +276,7 @@ export function readWorkbookPoints(
 
     worksheet.getCell(POINT_ID_CELL).value = excelId;
     worksheet.getColumn(26).hidden = true;
-    if (normalize(worksheet.getCell('A1').text) === 'название места') {
-      setPersonnelHeaders(worksheet);
-    }
+    setPlaceNameRow(worksheet, worksheet.name);
 
     return {
       id: existing?.id ?? `excel-point-${excelId}`,
@@ -311,15 +309,13 @@ export function upsertPointSheet(
   if (!worksheet) {
     const sheetName = uniqueSheetName(workbook, point.pointName);
     worksheet = workbook.addWorksheet(sheetName);
-    applyNewSheetTemplate(worksheet, excelId);
+    applyNewSheetTemplate(worksheet, sheetName, excelId);
   } else {
     const sheetName = uniqueSheetName(workbook, point.pointName, worksheet);
     if (worksheet.name !== sheetName) worksheet.name = sheetName;
     worksheet.getCell(POINT_ID_CELL).value = excelId;
     worksheet.getColumn(26).hidden = true;
-    if (normalize(worksheet.getCell('A1').text) === 'название места') {
-      setPersonnelHeaders(worksheet);
-    }
+    setPlaceNameRow(worksheet, sheetName);
   }
 
   writePersonnel(worksheet, point.personnel);

@@ -159,7 +159,7 @@ export function ExcelWorkbookModal({
                 </div>
                 <div className="fake-excel-grid">
                   <span className="column-letter">A</span><span className="column-letter">B</span>
-                  <strong>ФИО</strong><strong>Звание / должность</strong>
+                  <strong aria-hidden="true">&nbsp;</strong><strong>КПП №1</strong>
                   <span>Иванов Иван Иванович</span><span>Капитан</span>
                   <span>Петров Пётр Сергеевич</span><span>Инспектор</span>
                 </div>
