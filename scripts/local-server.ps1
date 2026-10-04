@@ -1,9 +1,32 @@
-param(
+﻿param(
     [string]$Root = "",
     [int]$Port = 4173
 )
 
 $ErrorActionPreference = "Stop"
+
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+try { $Host.UI.RawUI.WindowTitle = "ДУС - локальная карта" } catch { }
+Clear-Host
+
+$banner = @(
+    "             ДДДДД       У     У        ССССС",
+    "            Д     Д      У     У       С",
+    "            Д     Д      У     У       С",
+    "            Д     Д       У   У        С",
+    "            Д     Д        У У         С",
+    "          ДДДДДДДДД         У           ССССС",
+    "          Д       Д        У"
+)
+
+Write-Host ""
+foreach ($line in $banner) {
+    Write-Host $line -ForegroundColor Cyan
+}
+Write-Host ""
+Write-Host "                 Л О К А Л Ь Н А Я   К А Р Т А" -ForegroundColor DarkCyan
+Write-Host ("=" * 65) -ForegroundColor DarkCyan
+Write-Host ""
 
 if ([string]::IsNullOrWhiteSpace($Root)) {
     $Root = Join-Path (Split-Path -Parent $PSScriptRoot) "offline-site"
@@ -11,7 +34,7 @@ if ([string]::IsNullOrWhiteSpace($Root)) {
 
 $Root = [System.IO.Path]::GetFullPath($Root)
 if (-not (Test-Path (Join-Path $Root "index.html") -PathType Leaf)) {
-    Write-Host "ERROR: Offline site files were not found in: $Root" -ForegroundColor Red
+    Write-Host "ОШИБКА: файлы сайта не найдены в папке: $Root" -ForegroundColor Red
     exit 1
 }
 
@@ -37,7 +60,7 @@ for ($tryPort = $Port; $tryPort -lt ($Port + 10); $tryPort++) {
 }
 
 if ($null -eq $listener) {
-    Write-Host "ERROR: Ports $Port-$($Port + 9) are busy." -ForegroundColor Red
+    Write-Host "ОШИБКА: порты $Port-$($Port + 9) заняты." -ForegroundColor Red
     exit 1
 }
 

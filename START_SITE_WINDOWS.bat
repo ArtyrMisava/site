@@ -1,46 +1,23 @@
 @echo off
-chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
-title ДУС - локальная карта
-cls
-
-color 0B
-echo.
-echo             ДДДДД       У     У        ССССС
-echo            Д     Д      У     У       С
-echo            Д     Д      У     У       С
-echo            Д     Д       У   У        С
-echo            Д     Д        У У         С
-echo          ДДДДДДДДД         У           ССССС
-echo          Д       Д        У
-echo.
-echo                 Л О К А Л Ь Н А Я   К А Р Т А
-echo =================================================================
-echo.
-color 07
 
 if not exist "%~dp0offline-site\index.html" (
-  echo ОШИБКА: папка offline-site не найдена.
-  echo Полностью распакуйте ZIP-архив перед запуском ДУС.
+  echo ERROR: The offline-site folder is missing.
+  echo Extract the entire ZIP archive before starting DUS.
   echo.
   pause
   exit /b 1
 )
 
-echo Запускаем ДУС в браузере...
-echo Не закрывайте это окно во время работы с сайтом.
-echo Для остановки нажмите Ctrl+C или закройте окно.
-echo.
-
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\local-server.ps1" -Root "%~dp0offline-site"
+set "DUS_EXIT_CODE=%ERRORLEVEL%"
 
-if errorlevel 1 (
+if not "%DUS_EXIT_CODE%"=="0" (
   echo.
-  echo Не удалось запустить ДУС.
-  echo Проверьте сообщение об ошибке выше.
+  echo DUS could not be started. See the message above.
   echo.
   pause
 )
 
-endlocal
+endlocal & exit /b %DUS_EXIT_CODE%

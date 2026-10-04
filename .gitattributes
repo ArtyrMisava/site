@@ -1,0 +1,2 @@
+# Windows command launcher must keep CRLF line endings in GitHub ZIP archives.
+START_SITE_WINDOWS.bat -text whitespace=cr-at-eol
