@@ -26,7 +26,8 @@ import {
   itemTitle,
   loadItems,
   makeDraft,
-  MAP_HEIGHT,
+  mapLatitudeToGeographicLatitude,
+  MAP_GEOGRAPHIC_BOUNDS,
   MAP_WIDTH,
   STORAGE_KEY,
 } from './data';
@@ -57,20 +58,17 @@ interface RouteBuilderState {
   previousStatus: VehicleStatus;
 }
 
-const MAP_MIN_LONGITUDE = 21.5;
-const MAP_MAX_LONGITUDE = 49;
-const MAP_MIN_LATITUDE = 41.5;
-const MAP_MAX_LATITUDE = 54;
+const MAP_MIN_LONGITUDE = MAP_GEOGRAPHIC_BOUNDS.west;
+const MAP_MAX_LONGITUDE = MAP_GEOGRAPHIC_BOUNDS.east;
 const KILOMETRES_PER_LATITUDE_DEGREE = 111.32;
 // Для наглядности одна реальная секунда показывает одну минуту движения машины.
 const SIMULATION_TIME_SCALE = 60;
 
 function routeSegmentMetrics(from: RoutePoint, to: RoutePoint) {
-  const latitude = MAP_MIN_LATITUDE
-    + ((from.lat + to.lat) / 2 / MAP_HEIGHT) * (MAP_MAX_LATITUDE - MAP_MIN_LATITUDE);
-  const northKm = ((to.lat - from.lat) / MAP_HEIGHT)
-    * (MAP_MAX_LATITUDE - MAP_MIN_LATITUDE)
-    * KILOMETRES_PER_LATITUDE_DEGREE;
+  const fromLatitude = mapLatitudeToGeographicLatitude(from.lat);
+  const toLatitude = mapLatitudeToGeographicLatitude(to.lat);
+  const latitude = (fromLatitude + toLatitude) / 2;
+  const northKm = (toLatitude - fromLatitude) * KILOMETRES_PER_LATITUDE_DEGREE;
   const eastKm = ((to.lng - from.lng) / MAP_WIDTH)
     * (MAP_MAX_LONGITUDE - MAP_MIN_LONGITUDE)
     * KILOMETRES_PER_LATITUDE_DEGREE

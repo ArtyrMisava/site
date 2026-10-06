@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import L, { type LeafletEventHandlerFnMap } from 'leaflet';
 import {
   CircleMarker,
-  ImageOverlay,
   MapContainer,
   Marker,
   Pane,
   Polyline,
+  TileLayer,
   Tooltip,
   useMap,
   useMapEvents,
@@ -30,6 +30,7 @@ import type {
   RoutePoint,
   VehiclePoint,
 } from '../types';
+import { MapLabelsLayer } from './MapLabelsLayer';
 
 const MAP_BOUNDS = L.latLngBounds(
   [0, 0],
@@ -52,20 +53,6 @@ interface MapViewProps {
   onStartRoute: () => void;
 }
 
-interface MapPlace {
-  name: string;
-  x: number;
-  y: number;
-  population: number;
-  capital: boolean;
-  rank: number;
-  minZoom: number;
-}
-
-interface PlacesPayload {
-  places: MapPlace[];
-}
-
 function escapeHtml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -79,34 +66,6 @@ function personInitials(item: PersonPoint): string {
   const words = item.pointName.trim().split(/\s+/).filter(Boolean);
   const initials = words.slice(0, 2).map((word) => word.charAt(0)).join('');
   return escapeHtml(initials.toLocaleUpperCase('ru-RU') || '•');
-}
-
-function placeIcon(place: MapPlace): L.DivIcon {
-  const sizeClass = place.capital || place.population >= 900_000
-    ? 'major'
-    : place.population >= 250_000
-      ? 'medium'
-      : 'small';
-  const sideClass = place.x > MAP_WIDTH - 120 ? ' align-left' : '';
-
-  return L.divIcon({
-    className: 'leaflet-place-icon',
-    iconSize: [1, 1],
-    iconAnchor: [0, 0],
-    html: `
-      <span class="map-place ${sizeClass}${sideClass}">
-        <i></i><span>${escapeHtml(place.name)}</span>
-      </span>
-    `,
-  });
-}
-
-function minimumPopulationForZoom(zoom: number): number {
-  if (zoom < 0) return 700_000;
-  if (zoom < 0.75) return 300_000;
-  if (zoom < 1.5) return 100_000;
-  if (zoom < 2.4) return 35_000;
-  return 0;
 }
 
 function markerIcon(item: MapItem, focused: boolean): L.DivIcon {
@@ -218,7 +177,9 @@ function constrainMapToBounds(map: L.Map, fit = false) {
   // экрана размер контейнера уменьшается, поэтому допустимый минимум тоже
   // должен пересчитаться вниз.
   map.setMinZoom(-4);
-  const fitZoom = map.getBoundsZoom(MAP_BOUNDS, false, L.point(0, 0));
+  // Минимальный масштаб выбирается так, чтобы окно всегда находилось внутри
+  // покрытия: за границами локальных тайлов не появляется пустое поле.
+  const fitZoom = map.getBoundsZoom(MAP_BOUNDS, true, L.point(0, 0));
   map.setMinZoom(fitZoom);
   map.setMaxBounds(MAP_BOUNDS);
 
@@ -230,64 +191,23 @@ function constrainMapToBounds(map: L.Map, fit = false) {
 }
 
 function OfflineMapLayers() {
-  const map = useMap();
-  const [zoom, setZoom] = useState(map.getZoom());
-  const [places, setPlaces] = useState<MapPlace[]>([]);
-
-  useMapEvents({
-    zoomend() {
-      setZoom(map.getZoom());
-    },
-  });
-
-  useEffect(() => {
-    let active = true;
-    fetch('/maps/places.json')
-      .then((response) => {
-        if (!response.ok) throw new Error('Не удалось загрузить названия населённых пунктов');
-        return response.json() as Promise<PlacesPayload>;
-      })
-      .then((payload) => {
-        if (active) setPlaces(payload.places);
-      })
-      .catch(() => {
-        if (active) setPlaces([]);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const visiblePlaces = useMemo(() => {
-    const minimumPopulation = minimumPopulationForZoom(zoom);
-    return places.filter((place) => place.capital || place.population >= minimumPopulation);
-  }, [places, zoom]);
-
-  const detailed = zoom >= 1;
-
   return (
     <>
-      <ImageOverlay
-        url="/maps/real-region.svg"
+      <TileLayer
+        url="/maps/tiles/{z}/{x}/{y}.webp"
         bounds={MAP_BOUNDS}
-        opacity={detailed ? 0 : 1}
+        tileSize={512}
+        minNativeZoom={0}
+        maxNativeZoom={3}
+        minZoom={-4}
+        maxZoom={3.5}
+        noWrap
+        keepBuffer={2}
+        updateWhenZooming={false}
+        updateWhenIdle
+        className="offline-map-tiles"
       />
-      <ImageOverlay
-        url="/maps/real-region-detail.svg"
-        bounds={MAP_BOUNDS}
-        opacity={detailed ? 1 : 0}
-      />
-      <Pane name="place-labels" style={{ zIndex: 450, pointerEvents: 'none' }}>
-        {visiblePlaces.map((place) => (
-          <Marker
-            key={`${place.name}-${place.x}-${place.y}`}
-            position={[MAP_HEIGHT - place.y, place.x]}
-            icon={placeIcon(place)}
-            interactive={false}
-            keyboard={false}
-          />
-        ))}
-      </Pane>
+      <MapLabelsLayer />
     </>
   );
 }

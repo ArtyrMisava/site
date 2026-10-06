@@ -21,9 +21,9 @@ from shapely.geometry import GeometryCollection, LineString, MultiLineString, Mu
 
 WIDTH = 1600
 HEIGHT = 1000
-# Expanded regional extent: all of Ukraine and Moldova, southern Belarus,
-# south-western Russia through the Lower Volga, the Black Sea and the Caucasus.
-WEST, SOUTH, EAST, NORTH = 21.5, 41.5, 49.0, 54.0
+# Eastern Europe: Central Europe and the Balkans through European Russia,
+# the Baltic, Black and Caspian seas, Turkey's north and the Caucasus.
+WEST, SOUTH, EAST, NORTH = 14.0, 38.0, 60.0, 61.0
 
 
 def mercator_y(latitude: float) -> float:
@@ -133,6 +133,30 @@ def text_element(x: float, y: float, value: str, class_name: str, anchor: str = 
     )
 
 
+def property_value(properties: dict[str, object], *names: str) -> object:
+    lowered = {str(key).lower(): value for key, value in properties.items()}
+    for name in names:
+        value = properties.get(name)
+        if value not in (None, ""):
+            return value
+        value = lowered.get(name.lower())
+        if value not in (None, ""):
+            return value
+    return ""
+
+
+def translated_name(properties: dict[str, object]) -> str:
+    return str(property_value(
+        properties,
+        "NAME_RU",
+        "name_ru",
+        "NAME_LONG",
+        "ADMIN",
+        "NAME",
+        "name",
+    )).strip()
+
+
 def place_data(path: Path) -> list[dict[str, object]]:
     places: list[dict[str, object]] = []
     for shape_record in records(path):
@@ -142,7 +166,7 @@ def place_data(path: Path) -> list[dict[str, object]]:
         if not (WEST <= longitude <= EAST and SOUTH <= latitude <= NORTH):
             continue
         properties = shape_record.record.as_dict()
-        name = properties.get("NAME_RU") or properties.get("NAME") or ""
+        name = translated_name(properties)
         if not name:
             continue
         x, y = project((longitude, latitude))
@@ -151,22 +175,57 @@ def place_data(path: Path) -> list[dict[str, object]]:
                 "name": name,
                 "x": round(x, 2),
                 "y": round(y, 2),
-                "population": max(0, int(properties.get("POP_MAX") or 0)),
-                "capital": bool(properties.get("ADM0CAP")),
-                "rank": int(properties.get("LABELRANK") or 9),
-                "minZoom": float(properties.get("MIN_ZOOM") or 99),
+                "population": max(0, int(property_value(properties, "POP_MAX") or 0)),
+                "capital": bool(property_value(properties, "ADM0CAP")),
+                "worldCity": bool(property_value(properties, "WORLDCITY")),
+                "rank": int(property_value(properties, "LABELRANK") or 9),
+                "minZoom": float(property_value(properties, "MIN_ZOOM") or 99),
+                "country": str(property_value(properties, "ADM0NAME_RU", "ADM0NAME", "SOV0NAME") or ""),
             }
         )
 
     places.sort(
         key=lambda place: (
             not place["capital"],
+            not place["worldCity"],
             place["rank"],
             -int(place["population"]),
             str(place["name"]),
         )
     )
     return places
+
+
+def area_label_data(path: Path, kind: str) -> list[dict[str, object]]:
+    labels: list[dict[str, object]] = []
+    for shape_record in records(path):
+        if not intersects(shape_record.shape):
+            continue
+        properties = shape_record.record.as_dict()
+        name = translated_name(properties)
+        if not name:
+            continue
+        geometry = geometry_from_shape(shape_record.shape.__geo_interface__)
+        if not geometry.is_valid:
+            geometry = make_valid(geometry)
+        geometry = geometry.intersection(CLIP_BOX)
+        if geometry.is_empty:
+            continue
+        point = geometry.representative_point()
+        x, y = project((point.x, point.y))
+        labels.append(
+            {
+                "name": name,
+                "x": round(x, 2),
+                "y": round(y, 2),
+                "rank": int(property_value(properties, "LABELRANK", "labelrank", "scalerank") or 9),
+                "minZoom": float(property_value(properties, "MIN_ZOOM", "min_zoom", "min_label") or 0),
+                "kind": kind,
+                "country": str(property_value(properties, "admin", "adm0_a3", "geonunit") or ""),
+            }
+        )
+    labels.sort(key=lambda label: (label["rank"], str(label["name"])))
+    return labels
 
 
 def svg_document(style: str, layers: list[str], title: str) -> str:
@@ -194,6 +253,7 @@ def main() -> None:
     root = Path(sys.argv[1])
     output = Path(sys.argv[2])
     detail_output = output.with_name(f"{output.stem}-detail.svg")
+    ultra_output = output.with_name(f"{output.stem}-ultra.svg")
     places_output = output.with_name("places.json")
     physical = root / "physical"
     cultural = root / "cultural"
@@ -249,16 +309,22 @@ def main() -> None:
     railroads = paths_for(cultural / "ne_10m_railroads.shp", 0.07)
 
     overview_labels = [
-        text_element(*project((32.0, 43.45)), "Чёрное море", "water-label", anchor="middle"),
+        text_element(*project((19.2, 57.2)), "Балтийское море", "water-label", anchor="middle", rotate=-12),
+        text_element(*project((31.5, 43.2)), "Чёрное море", "water-label", anchor="middle"),
         text_element(*project((36.4, 46.05)), "Азовское море", "water-label", anchor="middle"),
-        text_element(*project((48.15, 43.15)), "Каспийское море", "water-label", anchor="middle", rotate=-78),
+        text_element(*project((51.2, 45.0)), "Каспийское море", "water-label", anchor="middle", rotate=-76),
+        text_element(*project((16.8, 43.2)), "Адриатическое море", "water-label", anchor="middle", rotate=-68),
         text_element(*project((24.8, 48.2)), "КАРПАТЫ", "terrain-label", anchor="middle", rotate=-30),
+        text_element(*project((22.5, 42.6)), "БАЛКАНЫ", "terrain-label", anchor="middle", rotate=-18),
         text_element(*project((43.7, 43.25)), "КАВКАЗ", "terrain-label", anchor="middle", rotate=-18),
+        text_element(*project((58.0, 56.0)), "УРАЛ", "terrain-label", anchor="middle", rotate=-78),
     ]
     detail_labels = [
-        text_element(*project((32.0, 43.45)), "Чёрное море", "water-label", anchor="middle"),
+        text_element(*project((19.2, 57.2)), "Балтийское море", "water-label", anchor="middle", rotate=-12),
+        text_element(*project((31.5, 43.2)), "Чёрное море", "water-label", anchor="middle"),
         text_element(*project((36.4, 46.05)), "Азовское море", "water-label", anchor="middle"),
-        text_element(*project((48.15, 43.15)), "Каспийское море", "water-label", anchor="middle", rotate=-78),
+        text_element(*project((51.2, 45.0)), "Каспийское море", "water-label", anchor="middle", rotate=-76),
+        text_element(*project((16.8, 43.2)), "Адриатическое море", "water-label", anchor="middle", rotate=-68),
     ]
 
     common_style = """
@@ -309,8 +375,6 @@ def main() -> None:
         path_elements(rivers_main, "river"),
         path_elements(rivers_overview, "river-minor"),
         path_elements(admin_one, "admin-one"),
-        path_elements(road_local, "road-local-casing"),
-        path_elements(road_local, "road-local"),
         path_elements(road_secondary, "road-secondary-casing"),
         path_elements(road_secondary, "road-secondary"),
         path_elements(road_major, "road-major-casing"),
@@ -320,6 +384,26 @@ def main() -> None:
         "".join(overview_labels),
     ]
     detail_layers = [
+        path_elements(land, "land"),
+        path_elements(regions["lowland"], "terrain-low"),
+        path_elements(regions["mountain"], "terrain-mountain"),
+        path_elements(urban, "urban"),
+        path_elements(lakes, "lake"),
+        path_elements(rivers_main, "river"),
+        path_elements(rivers_detail, "river-minor"),
+        path_elements(admin_one, "admin-one"),
+        path_elements(railroads, "railroad"),
+        path_elements(road_local, "road-local-casing"),
+        path_elements(road_local, "road-local"),
+        path_elements(road_secondary, "road-secondary-casing"),
+        path_elements(road_secondary, "road-secondary"),
+        path_elements(road_major, "road-major-casing"),
+        path_elements(road_major, "road-major"),
+        path_elements(countries, "country-casing"),
+        path_elements(countries, "country"),
+        "".join(detail_labels),
+    ]
+    ultra_layers = [
         path_elements(land, "land"),
         path_elements(regions["lowland"], "terrain-low"),
         path_elements(regions["mountain"], "terrain-mountain"),
@@ -343,15 +427,19 @@ def main() -> None:
     ]
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(svg_document(overview_style, base_layers, "Расширенная офлайн-карта региона"), encoding="utf-8")
-    detail_output.write_text(svg_document(detail_style, detail_layers, "Подробная офлайн-карта региона"), encoding="utf-8")
-    places = {
+    output.write_text(svg_document(overview_style, base_layers, "Обзорная офлайн-карта Восточной Европы"), encoding="utf-8")
+    detail_output.write_text(svg_document(detail_style, detail_layers, "Подробная офлайн-карта Восточной Европы"), encoding="utf-8")
+    ultra_output.write_text(svg_document(detail_style, ultra_layers, "Максимально подробная офлайн-карта Восточной Европы"), encoding="utf-8")
+    labels = {
         "bounds": {"west": WEST, "south": SOUTH, "east": EAST, "north": NORTH},
         "places": place_data(cultural / "ne_10m_populated_places.shp"),
+        "countries": area_label_data(cultural / "ne_10m_admin_0_countries.shp", "country"),
+        "regions": area_label_data(cultural / "ne_10m_admin_1_states_provinces.shp", "region"),
     }
-    places_output.write_text(json.dumps(places, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    places_output.write_text(json.dumps(labels, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"Wrote {output} ({output.stat().st_size:,} bytes)")
     print(f"Wrote {detail_output} ({detail_output.stat().st_size:,} bytes)")
+    print(f"Wrote {ultra_output} ({ultra_output.stat().st_size:,} bytes)")
     print(f"Wrote {places_output} ({places_output.stat().st_size:,} bytes)")
 
 

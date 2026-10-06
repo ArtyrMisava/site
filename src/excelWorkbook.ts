@@ -1,9 +1,15 @@
 import type { Workbook, Worksheet } from 'exceljs';
-import { MAP_HEIGHT, MAP_WIDTH } from './data';
+import {
+  MAP_COORDINATE_VERSION,
+  MAP_HEIGHT,
+  MAP_WIDTH,
+  migrateLegacyMapCoordinates,
+} from './data';
 import type { PersonnelEntry, PersonPoint } from './types';
 
 const SERVICE_SHEET_NAME = '_Карта';
 const POINT_ID_CELL = 'Z1';
+const MAP_VERSION_CELL = 'F1';
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 interface ExcelWritable {
@@ -82,6 +88,12 @@ function readIndex(workbook: Workbook): IndexRecord[] {
   }
 
   return records;
+}
+
+function workbookCoordinateVersion(workbook: Workbook): number {
+  const value = workbook.getWorksheet(SERVICE_SHEET_NAME)?.getCell(MAP_VERSION_CELL).value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 1;
 }
 
 function readPersonnel(worksheet: Worksheet, excelId: string): PersonnelEntry[] {
@@ -196,6 +208,8 @@ function ensureServiceSheet(workbook: Workbook, points: PersonPoint[]) {
   const sheet = workbook.addWorksheet(SERVICE_SHEET_NAME);
 
   sheet.addRow(['ID', 'Лист', 'X', 'Y']);
+  sheet.getCell(MAP_VERSION_CELL).value = MAP_COORDINATE_VERSION;
+  sheet.getColumn(6).hidden = true;
   points
     .filter((point) => point.excelId)
     .forEach((point) => {
@@ -251,6 +265,7 @@ export function readWorkbookPoints(
 ): PersonPoint[] {
   const { workbook } = session;
   const index = readIndex(workbook);
+  const hasLegacyCoordinates = workbookCoordinateVersion(workbook) < MAP_COORDINATE_VERSION;
   const indexById = new Map(index.filter((entry) => entry.excelId).map((entry) => [entry.excelId, entry]));
   const indexByName = new Map(index.map((entry) => [normalize(entry.sheetName), entry]));
   const existingById = new Map(
@@ -269,10 +284,22 @@ export function readWorkbookPoints(
     const indexed = indexById.get(excelId) || indexedByName;
     const existing = existingById.get(excelId) || existingByName.get(normalize(worksheet.name));
     const fallback = autoPosition(sheetIndex, pointSheets.length);
-    const lng = indexed?.lng ?? existing?.lng ?? fallback.lng;
-    const lat = indexed?.mapY !== null && indexed?.mapY !== undefined
+    const indexedLng = indexed?.lng;
+    const indexedLat = indexed?.mapY !== null && indexed?.mapY !== undefined
       ? MAP_HEIGHT - indexed.mapY
-      : existing?.lat ?? fallback.lat;
+      : null;
+    let lng = indexedLng ?? existing?.lng ?? fallback.lng;
+    let lat = indexedLat ?? existing?.lat ?? fallback.lat;
+    if (hasLegacyCoordinates) {
+      // Компоненты независимы в линейной проекции, поэтому переносим только
+      // те значения, которые действительно пришли из старого служебного листа.
+      if (indexedLng !== null && indexedLng !== undefined) {
+        lng = migrateLegacyMapCoordinates(0, indexedLng).lng;
+      }
+      if (indexedLat !== null) {
+        lat = migrateLegacyMapCoordinates(indexedLat, 0).lat;
+      }
+    }
 
     worksheet.getCell(POINT_ID_CELL).value = excelId;
     worksheet.getColumn(26).hidden = true;

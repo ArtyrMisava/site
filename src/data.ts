@@ -10,6 +10,44 @@ import type {
 export const MAP_WIDTH = 1600;
 export const MAP_HEIGHT = 1000;
 export const STORAGE_KEY = 'lokus-map-items-v1';
+export const MAP_COORDINATE_VERSION = 2;
+export const MAP_GEOGRAPHIC_BOUNDS = { west: 14, south: 38, east: 60, north: 61 } as const;
+
+const COORDINATE_VERSION_KEY = 'dus-map-coordinate-version';
+const LEGACY_BOUNDS = { west: 21.5, south: 41.5, east: 49, north: 54 } as const;
+
+function mercatorY(latitude: number): number {
+  const radians = Math.min(85, Math.max(-85, latitude)) * Math.PI / 180;
+  return Math.log(Math.tan(Math.PI / 4 + radians / 2));
+}
+
+function geographicLatitude(projectedY: number): number {
+  return (2 * Math.atan(Math.exp(projectedY)) - Math.PI / 2) * 180 / Math.PI;
+}
+
+export function mapLatitudeToGeographicLatitude(lat: number): number {
+  const south = mercatorY(MAP_GEOGRAPHIC_BOUNDS.south);
+  const north = mercatorY(MAP_GEOGRAPHIC_BOUNDS.north);
+  return geographicLatitude(south + (lat / MAP_HEIGHT) * (north - south));
+}
+
+export function migrateLegacyMapCoordinates(lat: number, lng: number): RoutePoint {
+  const legacySouth = mercatorY(LEGACY_BOUNDS.south);
+  const legacyNorth = mercatorY(LEGACY_BOUNDS.north);
+  const currentSouth = mercatorY(MAP_GEOGRAPHIC_BOUNDS.south);
+  const currentNorth = mercatorY(MAP_GEOGRAPHIC_BOUNDS.north);
+  const projectedLatitude = legacySouth + (lat / MAP_HEIGHT) * (legacyNorth - legacySouth);
+  const longitude = LEGACY_BOUNDS.west + (lng / MAP_WIDTH) * (LEGACY_BOUNDS.east - LEGACY_BOUNDS.west);
+  return {
+    lat: Math.min(MAP_HEIGHT, Math.max(0,
+      ((projectedLatitude - currentSouth) / (currentNorth - currentSouth)) * MAP_HEIGHT,
+    )),
+    lng: Math.min(MAP_WIDTH, Math.max(0,
+      ((longitude - MAP_GEOGRAPHIC_BOUNDS.west)
+        / (MAP_GEOGRAPHIC_BOUNDS.east - MAP_GEOGRAPHIC_BOUNDS.west)) * MAP_WIDTH,
+    )),
+  };
+}
 
 const now = '2026-10-04T09:00:00.000Z';
 
@@ -21,8 +59,8 @@ export const seedItems: MapItem[] = [
     personnel: [
       { id: 'person-ivan-petrov', fullName: 'Иван Петров', position: 'Руководитель смены' },
     ],
-    lat: 530,
-    lng: 780,
+    lat: 398.22,
+    lng: 727.17,
     createdAt: now,
     updatedAt: now,
   },
@@ -33,8 +71,8 @@ export const seedItems: MapItem[] = [
     personnel: [
       { id: 'person-anna-sokolova', fullName: 'Анна Соколова', position: 'Кладовщик' },
     ],
-    lat: 700,
-    lng: 1270,
+    lat: 485.76,
+    lng: 1020.11,
     createdAt: now,
     updatedAt: now,
   },
@@ -45,8 +83,8 @@ export const seedItems: MapItem[] = [
     personnel: [
       { id: 'person-mikhail-orlov', fullName: 'Михаил Орлов', position: 'Дежурный' },
     ],
-    lat: 310,
-    lng: 280,
+    lat: 284.93,
+    lng: 428.26,
     createdAt: now,
     updatedAt: now,
   },
@@ -61,8 +99,8 @@ export const seedItems: MapItem[] = [
     routeSegment: 0,
     routeProgress: 0,
     routeSpeed: 60,
-    lat: 360,
-    lng: 950,
+    lat: 310.67,
+    lng: 828.8,
     createdAt: now,
     updatedAt: now,
   },
@@ -77,8 +115,8 @@ export const seedItems: MapItem[] = [
     routeSegment: 0,
     routeProgress: 0,
     routeSpeed: 60,
-    lat: 280,
-    lng: 1360,
+    lat: 269.48,
+    lng: 1073.91,
     createdAt: now,
     updatedAt: now,
   },
@@ -121,8 +159,12 @@ function normalizePoint(value: Record<string, unknown>): PersonPoint {
     personnel,
     excelId: value.excelId ? String(value.excelId) : undefined,
     sheetName: value.sheetName ? String(value.sheetName) : undefined,
-    lat: Number.isFinite(Number(value.lat)) ? Number(value.lat) : MAP_HEIGHT / 2,
-    lng: Number.isFinite(Number(value.lng)) ? Number(value.lng) : MAP_WIDTH / 2,
+    lat: Number.isFinite(Number(value.lat))
+      ? Math.min(MAP_HEIGHT, Math.max(0, Number(value.lat)))
+      : MAP_HEIGHT / 2,
+    lng: Number.isFinite(Number(value.lng))
+      ? Math.min(MAP_WIDTH, Math.max(0, Number(value.lng)))
+      : MAP_WIDTH / 2,
     createdAt: String(value.createdAt ?? timestamp),
     updatedAt: String(value.updatedAt ?? timestamp),
   };
@@ -180,16 +222,41 @@ function normalizeVehicle(value: Record<string, unknown>): VehiclePoint {
   };
 }
 
+function migrateLegacyItemCoordinates(item: MapItem): MapItem {
+  const position = migrateLegacyMapCoordinates(item.lat, item.lng);
+  if (item.kind === 'person') return { ...item, ...position };
+  return {
+    ...item,
+    ...position,
+    route: item.route.map((point) => migrateLegacyMapCoordinates(point.lat, point.lng)),
+  };
+}
+
 export function loadItems(): MapItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return seedItems;
+    if (!raw) {
+      localStorage.setItem(COORDINATE_VERSION_KEY, String(MAP_COORDINATE_VERSION));
+      return seedItems;
+    }
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return seedItems;
+    if (!Array.isArray(parsed)) {
+      localStorage.setItem(COORDINATE_VERSION_KEY, String(MAP_COORDINATE_VERSION));
+      return seedItems;
+    }
 
-    return parsed
+    const items = parsed
       .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
       .map((item) => (item.kind === 'person' ? normalizePoint(item) : normalizeVehicle(item)));
+    const coordinateVersion = Number(localStorage.getItem(COORDINATE_VERSION_KEY));
+    if (coordinateVersion === MAP_COORDINATE_VERSION) return items;
+
+    const migrated = items.map(migrateLegacyItemCoordinates);
+    // Записываем преобразованные данные до версии: даже при аварийной перезагрузке
+    // старые координаты не будут ошибочно помечены как уже обновлённые.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+    localStorage.setItem(COORDINATE_VERSION_KEY, String(MAP_COORDINATE_VERSION));
+    return migrated;
   } catch {
     return seedItems;
   }

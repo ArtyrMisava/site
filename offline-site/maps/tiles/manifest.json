@@ -1,0 +1,14 @@
+{
+  "width": 1600,
+  "height": 1000,
+  "tileSize": 512,
+  "minNativeZoom": 0,
+  "maxNativeZoom": 3,
+  "tileCount": 540,
+  "sources": [
+    "real-region.svg",
+    "real-region-detail.svg",
+    "real-region-detail.svg",
+    "real-region-ultra.svg"
+  ]
+}
