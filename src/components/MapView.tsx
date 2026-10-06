@@ -94,7 +94,7 @@ function useItemLocationNames(items: MapItem[]): Map<string, string> {
 
     for (const item of items) {
       const cached = cacheRef.current.get(item.id);
-      if (cached && Math.hypot(item.lat - cached.lat, item.lng - cached.lng) < 6) {
+      if (cached && Math.hypot(item.lat - cached.lat, item.lng - cached.lng) < 1.2) {
         names.set(item.id, cached.name);
         continue;
       }

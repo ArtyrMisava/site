@@ -3,6 +3,7 @@ import L from 'leaflet';
 import { useMap } from 'react-leaflet';
 import { MAP_HEIGHT } from '../data';
 import {
+  findSettlementsInBounds,
   loadMapGeography,
   type AreaLabel,
   type MapGeographyPayload,
@@ -10,78 +11,76 @@ import {
 } from '../mapGeography';
 
 type DrawLabel = {
-  key: string;
   name: string;
   x: number;
   y: number;
   kind: 'place' | 'country' | 'region';
-  priority: number;
   capital?: boolean;
   population?: number;
+  rank?: number;
 };
 
 type Box = { left: number; top: number; right: number; bottom: number };
 
 const VIEW_PADDING = 140;
-const GRID_SIZE = 64;
-const MAX_VISIBLE_LABELS = 280;
+const GRID_SIZE = 60;
+const MAX_VISIBLE_LABELS = 300;
+const MAX_PLACE_CANDIDATES = 4000;
 
 function placeIsVisible(place: PlaceLabel, zoom: number) {
-  if (zoom < 0.65) return place.capital || place.population >= 1_000_000;
-  if (zoom < 1.35) return place.capital || place.worldCity || place.population >= 400_000 || place.rank <= 4;
-  if (zoom < 2.1) return place.capital || place.population >= 90_000 || place.rank <= 6;
-  if (zoom < 2.85) return place.capital || place.population >= 18_000 || place.rank <= 8;
-  return true;
+  return zoom + 0.001 >= place.minZoom;
 }
 
 function areaIsVisible(area: AreaLabel, zoom: number) {
-  if (area.kind === 'country') return zoom < 2.35;
-  if (zoom < 1.15) return false;
+  // Названия стран нужны на общем обзоре, но на региональном масштабе
+  // уступают место плотной сетке городов, посёлков и районных центров.
+  if (area.kind === 'country') return zoom < 1.4;
+  if (zoom < 1.2) return false;
   if (zoom < 1.8) return area.rank <= 3;
   if (zoom < 2.6) return area.rank <= 5;
   return true;
 }
 
-function buildLabels(payload: MapGeographyPayload, zoom: number): DrawLabel[] {
+function buildLabels(
+  payload: MapGeographyPayload,
+  visiblePlaces: PlaceLabel[],
+  zoom: number,
+): DrawLabel[] {
   const areas = [...payload.countries, ...payload.regions]
     .filter((area) => areaIsVisible(area, zoom))
     .map<DrawLabel>((area) => ({
-      key: `${area.kind}:${area.country}:${area.name}:${area.x}:${area.y}`,
       name: area.name,
       x: area.x,
       y: area.y,
       kind: area.kind,
-      priority: area.kind === 'country' ? 10 + area.rank : 35 + area.rank,
     }));
 
-  const places = payload.places
-    .filter((place) => placeIsVisible(place, zoom))
-    .map<DrawLabel>((place) => ({
-      key: `place:${place.country}:${place.name}:${place.x}:${place.y}`,
+  const places: DrawLabel[] = [];
+  for (const place of visiblePlaces) {
+    if (!placeIsVisible(place, zoom)) continue;
+    places.push({
       name: place.name,
       x: place.x,
       y: place.y,
       kind: 'place',
-      priority: place.capital
-        ? place.population >= 1_000_000 ? 0 : 3
-        : Math.max(6, 30 - Math.log10(Math.max(10, place.population)) * 3 + place.rank),
       capital: place.capital,
       population: place.population,
-    }));
+      rank: place.rank,
+    });
+    if (places.length >= MAX_PLACE_CANDIDATES) break;
+  }
 
-  return [...places, ...areas].sort((left, right) =>
-    left.priority - right.priority || (right.population ?? 0) - (left.population ?? 0) || left.name.localeCompare(right.name, 'ru'),
-  );
+  return [...places, ...areas];
 }
 
 function boxCells(box: Box) {
-  const cells: string[] = [];
+  const cells: number[] = [];
   const firstX = Math.floor(box.left / GRID_SIZE);
   const lastX = Math.floor(box.right / GRID_SIZE);
   const firstY = Math.floor(box.top / GRID_SIZE);
   const lastY = Math.floor(box.bottom / GRID_SIZE);
   for (let x = firstX; x <= lastX; x += 1) {
-    for (let y = firstY; y <= lastY; y += 1) cells.push(`${x}:${y}`);
+    for (let y = firstY; y <= lastY; y += 1) cells.push(x * 10_000 + y);
   }
   return cells;
 }
@@ -123,7 +122,6 @@ export function MapLabelsLayer() {
       return undefined;
     }
 
-    const labelsByZoom = new Map<string, DrawLabel[]>();
     let frame = 0;
     const render = () => {
       const startedAt = performance.now();
@@ -149,38 +147,65 @@ export function MapLabelsLayer() {
       context.textBaseline = 'middle';
 
       const zoom = map.getZoom();
-      const zoomKey = zoom.toFixed(2);
-      let labels = labelsByZoom.get(zoomKey);
-      if (!labels) {
-        labels = buildLabels(payload, zoom);
-        labelsByZoom.set(zoomKey, labels);
-      }
-      const visibleBounds = map.getBounds().pad(0.35);
-      const occupied = new Map<string, Box[]>();
-      const accepted: Array<{ label: DrawLabel; point: L.Point; box: Box; font: string }> = [];
+      const visibleBounds = map.getBounds().pad(0.18);
+      const visiblePlaces = findSettlementsInBounds(
+        payload,
+        visibleBounds.getWest(),
+        MAP_HEIGHT - visibleBounds.getNorth(),
+        visibleBounds.getEast(),
+        MAP_HEIGHT - visibleBounds.getSouth(),
+      );
+      const queriedAt = performance.now();
+      const labels = buildLabels(payload, visiblePlaces, zoom);
+      const labelsBuiltAt = performance.now();
+      const occupied = new Map<number, Box[]>();
+      const accepted: Array<{
+        label: DrawLabel;
+        point: { x: number; y: number };
+        box: Box;
+        font: string;
+      }> = [];
+      const pixelOrigin = map.getPixelOrigin();
+      const projectedOrigin = map.project([0, 0], zoom);
+      const xScale = map.project([0, 1], zoom).x - projectedOrigin.x;
+      const yScale = map.project([1, 0], zoom).y - projectedOrigin.y;
 
       for (const label of labels) {
         if (accepted.length >= MAX_VISIBLE_LABELS) break;
-        const position = L.latLng(MAP_HEIGHT - label.y, label.x);
-        if (!visibleBounds.contains(position)) continue;
-        const layerPoint = map.latLngToLayerPoint(position);
-        const point = layerPoint.subtract(topLeft);
+        const layerX = Math.round(projectedOrigin.x + label.x * xScale) - pixelOrigin.x;
+        const layerY = Math.round(projectedOrigin.y + (MAP_HEIGHT - label.y) * yScale) - pixelOrigin.y;
+        const point = { x: layerX - topLeft.x, y: layerY - topLeft.y };
         if (point.x < -80 || point.y < -30 || point.x > width + 80 || point.y > height + 30) continue;
 
+        const majorPlace = label.kind === 'place'
+          && (label.capital || (label.population ?? 0) >= 100_000 || (label.rank ?? 10) <= 3);
+        const mediumPlace = label.kind === 'place'
+          && ((label.population ?? 0) >= 10_000 || (label.rank ?? 10) <= 6);
         const font = label.kind === 'country'
-          ? `${zoom >= 1.5 ? 700 : 600} ${zoom >= 1.5 ? 14 : 12}px "Segoe UI", Arial, sans-serif`
+          ? '650 12px "Segoe UI", Arial, sans-serif'
           : label.kind === 'region'
-            ? '600 11px "Segoe UI", Arial, sans-serif'
-            : `${label.capital ? 700 : 600} ${label.capital ? 12 : 11}px "Segoe UI", Arial, sans-serif`;
-        context.font = font;
+            ? '600 10.5px "Segoe UI", Arial, sans-serif'
+            : majorPlace
+              ? `${label.capital ? 700 : 650} ${label.capital ? 12 : 11.5}px "Segoe UI", Arial, sans-serif`
+              : mediumPlace
+                ? '600 10.5px "Segoe UI", Arial, sans-serif'
+                : '500 10px "Segoe UI", Arial, sans-serif';
         const value = label.kind === 'country' ? label.name.toLocaleUpperCase('ru') : label.name;
-        const textWidth = context.measureText(value).width;
-        const dotOffset = label.kind === 'place' ? 7 : 0;
+        const averageCharacterWidth = label.kind === 'country'
+          ? 6.8
+          : label.kind === 'region'
+            ? 5.8
+            : majorPlace
+              ? 6.1
+              : mediumPlace ? 5.6 : 5.2;
+        const textWidth = value.length * averageCharacterWidth;
+        const dotOffset = label.kind === 'place' ? 6.5 : 0;
+        const halfHeight = majorPlace || label.kind !== 'place' ? 9 : 8;
         const box: Box = {
-          left: point.x - (label.kind === 'place' ? 4 : textWidth / 2 + 4),
-          top: point.y - 9,
-          right: point.x + (label.kind === 'place' ? dotOffset + textWidth + 4 : textWidth / 2 + 4),
-          bottom: point.y + 9,
+          left: point.x - (label.kind === 'place' ? 3.5 : textWidth / 2 + 4),
+          top: point.y - halfHeight,
+          right: point.x + (label.kind === 'place' ? dotOffset + textWidth + 3.5 : textWidth / 2 + 4),
+          bottom: point.y + halfHeight,
         };
         const cells = boxCells(box);
         const collision = cells.some((cell) => occupied.get(cell)?.some((other) => boxesOverlap(box, other)));
@@ -192,23 +217,27 @@ export function MapLabelsLayer() {
         }
         accepted.push({ label: { ...label, name: value }, point, box, font });
       }
+      const layoutFinishedAt = performance.now();
 
       for (const { label, point, font } of accepted) {
         context.font = font;
         if (label.kind === 'place') {
+          const majorPlace = label.capital
+            || (label.population ?? 0) >= 100_000
+            || (label.rank ?? 10) <= 3;
           context.beginPath();
-          context.arc(point.x, point.y, label.capital ? 3.2 : 2.4, 0, Math.PI * 2);
-          context.fillStyle = label.capital ? '#bd5046' : '#486c78';
+          context.arc(point.x, point.y, label.capital ? 3 : majorPlace ? 2.25 : 1.65, 0, Math.PI * 2);
+          context.fillStyle = label.capital ? '#b94d45' : majorPlace ? '#496b76' : '#70858a';
           context.fill();
-          context.lineWidth = 1.4;
+          context.lineWidth = majorPlace ? 1.25 : 1;
           context.strokeStyle = 'rgba(255,255,255,.96)';
           context.stroke();
           context.textAlign = 'left';
-          context.lineWidth = 3.2;
+          context.lineWidth = majorPlace ? 3.2 : 2.8;
           context.strokeStyle = 'rgba(255,255,255,.96)';
-          context.strokeText(label.name, point.x + 7, point.y);
-          context.fillStyle = label.capital ? '#3f4547' : '#40545b';
-          context.fillText(label.name, point.x + 7, point.y);
+          context.strokeText(label.name, point.x + 6.5, point.y);
+          context.fillStyle = label.capital ? '#353d40' : majorPlace ? '#374b51' : '#4d5e62';
+          context.fillText(label.name, point.x + 6.5, point.y);
         } else {
           context.textAlign = 'center';
           context.lineWidth = label.kind === 'country' ? 4 : 3;
@@ -219,7 +248,13 @@ export function MapLabelsLayer() {
         }
       }
       canvas.dataset.visibleLabels = String(accepted.length);
+      canvas.dataset.visibleSettlements = String(accepted.filter(({ label }) => label.kind === 'place').length);
+      canvas.dataset.candidateSettlements = String(visiblePlaces.length);
+      canvas.dataset.totalSettlements = String(payload.places.length);
       canvas.dataset.zoom = zoom.toFixed(2);
+      canvas.dataset.queryMs = (queriedAt - startedAt).toFixed(1);
+      canvas.dataset.buildMs = (labelsBuiltAt - queriedAt).toFixed(1);
+      canvas.dataset.layoutMs = (layoutFinishedAt - labelsBuiltAt).toFixed(1);
       canvas.dataset.renderMs = (performance.now() - startedAt).toFixed(1);
     };
 
