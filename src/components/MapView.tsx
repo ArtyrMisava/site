@@ -23,6 +23,11 @@ import {
   X,
 } from 'lucide-react';
 import { MAP_HEIGHT, MAP_WIDTH } from '../data';
+import {
+  findNearestSettlement,
+  loadMapGeography,
+  type MapGeographyPayload,
+} from '../mapGeography';
 import type {
   ItemKind,
   MapItem,
@@ -36,6 +41,12 @@ const MAP_BOUNDS = L.latLngBounds(
   [0, 0],
   [MAP_HEIGHT, MAP_WIDTH],
 );
+
+interface LocationCacheEntry {
+  lat: number;
+  lng: number;
+  name: string;
+}
 
 interface MapViewProps {
   items: MapItem[];
@@ -53,6 +64,47 @@ interface MapViewProps {
   onStartRoute: () => void;
 }
 
+function useItemLocationNames(items: MapItem[]): Map<string, string> {
+  const [geography, setGeography] = useState<MapGeographyPayload | null>(null);
+  const cacheRef = useRef(new Map<string, LocationCacheEntry>());
+
+  useEffect(() => {
+    let active = true;
+    loadMapGeography()
+      .then((payload) => {
+        if (active) setGeography(payload);
+      })
+      .catch((error: unknown) => console.error(error));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return useMemo(() => {
+    const names = new Map<string, string>();
+    if (!geography) return names;
+
+    const activeIds = new Set(items.map((item) => item.id));
+    for (const cachedId of cacheRef.current.keys()) {
+      if (!activeIds.has(cachedId)) cacheRef.current.delete(cachedId);
+    }
+
+    for (const item of items) {
+      const cached = cacheRef.current.get(item.id);
+      if (cached && Math.hypot(item.lat - cached.lat, item.lng - cached.lng) < 6) {
+        names.set(item.id, cached.name);
+        continue;
+      }
+      const nearest = findNearestSettlement(geography, item.lat, item.lng);
+      if (!nearest) continue;
+      const entry = { lat: item.lat, lng: item.lng, name: nearest.name };
+      cacheRef.current.set(item.id, entry);
+      names.set(item.id, entry.name);
+    }
+    return names;
+  }, [geography, items]);
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -68,17 +120,21 @@ function personInitials(item: PersonPoint): string {
   return escapeHtml(initials.toLocaleUpperCase('ru-RU') || '•');
 }
 
-function markerIcon(item: MapItem, focused: boolean): L.DivIcon {
+function markerIcon(item: MapItem, focused: boolean, locationName: string): L.DivIcon {
   const focusClass = focused ? ' is-focused' : '';
+  const locationBadge = locationName
+    ? `<span class="marker-location" title="Ближайший населённый пункт"><i></i>${escapeHtml(locationName)}</span>`
+    : '';
 
   if (item.kind === 'person') {
     return L.divIcon({
       className: 'leaflet-object-icon',
       iconSize: [92, 92],
       iconAnchor: [46, 46],
-      tooltipAnchor: [0, -31],
+      tooltipAnchor: [0, -78],
       html: `
         <div class="object-marker person-object${focusClass}">
+          ${locationBadge}
           <span class="marker-proximity"></span>
           <span class="person-pin">
             <span class="person-pin-core">${personInitials(item)}</span>
@@ -94,9 +150,10 @@ function markerIcon(item: MapItem, focused: boolean): L.DivIcon {
     className: 'leaflet-object-icon leaflet-vehicle-icon',
     iconSize: [96, 96],
     iconAnchor: [48, 48],
-    tooltipAnchor: [0, -33],
+    tooltipAnchor: [0, -78],
     html: `
       <div class="object-marker vehicle-object ${statusClass}${focusClass}">
+        ${locationBadge}
         <span class="marker-proximity"></span>
         <span class="vehicle-direction" style="transform: translate(-50%, -50%) rotate(${item.heading}deg)">
           <span class="direction-tip"></span>
@@ -118,7 +175,7 @@ function vehicleStatus(status: VehiclePoint['status']): string {
   return 'На стоянке';
 }
 
-function ObjectTooltip({ item }: { item: MapItem }) {
+function ObjectTooltip({ item, locationName }: { item: MapItem; locationName: string }) {
   if (item.kind === 'person') {
     return (
       <div className="map-tooltip-card point-personnel-tooltip">
@@ -127,6 +184,7 @@ function ObjectTooltip({ item }: { item: MapItem }) {
           <span className="tooltip-live"><i /> {item.sheetName ? 'Excel' : 'Локально'}</span>
         </div>
         <strong className="tooltip-title">{item.pointName}</strong>
+        {locationName && <span className="tooltip-location">Рядом: {locationName}</span>}
         {item.personnel.length > 0 ? (
           <div className="personnel-tooltip-scroll">
             <table className="personnel-tooltip-table">
@@ -162,6 +220,7 @@ function ObjectTooltip({ item }: { item: MapItem }) {
       <table>
         <tbody>
           <tr><th>Водитель</th><td>{item.driver || 'Не указан'}</td></tr>
+          {locationName && <tr><th>Рядом</th><td>{locationName}</td></tr>}
           <tr><th>Статус</th><td>{vehicleStatus(item.status)}</td></tr>
           <tr><th>Курс</th><td>{Math.round(item.heading)}°</td></tr>
           {item.route.length > 1 && <tr><th>Маршрут</th><td>{item.route.length} точек</td></tr>}
@@ -200,10 +259,10 @@ function OfflineMapLayers() {
         minNativeZoom={0}
         maxNativeZoom={3}
         minZoom={-4}
-        maxZoom={3.5}
+        maxZoom={4}
         noWrap
         keepBuffer={2}
-        updateWhenZooming={false}
+        updateWhenZooming
         updateWhenIdle
         className="offline-map-tiles"
       />
@@ -466,6 +525,7 @@ function VehicleRoutes({
 function MapObject({
   item,
   focused,
+  locationName,
   editable,
   draggable,
   mapClickMode,
@@ -474,13 +534,17 @@ function MapObject({
 }: {
   item: MapItem;
   focused: boolean;
+  locationName: string;
   editable: boolean;
   draggable: boolean;
   mapClickMode: boolean;
   onEdit: (item: MapItem) => void;
   onMove: (id: string, lat: number, lng: number) => void;
 }) {
-  const icon = useMemo(() => markerIcon(item, focused), [item, focused]);
+  const icon = useMemo(
+    () => markerIcon(item, focused, locationName),
+    [item, focused, locationName],
+  );
 
   const eventHandlers = useMemo<LeafletEventHandlerFnMap>(
     () => ({
@@ -525,7 +589,7 @@ function MapObject({
         className="object-tooltip"
         offset={[0, -4]}
       >
-        <ObjectTooltip item={item} />
+        <ObjectTooltip item={item} locationName={locationName} />
       </Tooltip>
     </Marker>
   );
@@ -588,6 +652,7 @@ export function MapView({
   const routeVehicle = routeVehicleId
     ? items.find((item): item is VehiclePoint => item.id === routeVehicleId && item.kind === 'vehicle')
     : null;
+  const itemLocationNames = useItemLocationNames(items);
 
   return (
     <div className={`map-wrap ${placement ? 'is-placing' : ''} ${routeDraft ? 'is-routing' : ''}`}>
@@ -602,7 +667,11 @@ export function MapView({
         maxBoundsViscosity={1}
         zoomSnap={0.25}
         zoomDelta={0.5}
+        wheelDebounceTime={25}
         wheelPxPerZoomLevel={80}
+        zoomAnimation={false}
+        fadeAnimation={false}
+        markerZoomAnimation={false}
         zoomControl={false}
         attributionControl={false}
         preferCanvas={false}
@@ -622,6 +691,7 @@ export function MapView({
             key={item.id}
             item={item}
             focused={item.id === focusedItem?.id}
+            locationName={itemLocationNames.get(item.id) ?? ''}
             editable={
               isAdmin
               && placement === null

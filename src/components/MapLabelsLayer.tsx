@@ -2,32 +2,12 @@ import { useEffect, useState } from 'react';
 import L from 'leaflet';
 import { useMap } from 'react-leaflet';
 import { MAP_HEIGHT } from '../data';
-
-type PlaceLabel = {
-  name: string;
-  x: number;
-  y: number;
-  population: number;
-  capital: boolean;
-  worldCity: boolean;
-  rank: number;
-  country: string;
-};
-
-type AreaLabel = {
-  name: string;
-  x: number;
-  y: number;
-  rank: number;
-  kind: 'country' | 'region';
-  country: string;
-};
-
-type LabelPayload = {
-  places: PlaceLabel[];
-  countries: AreaLabel[];
-  regions: AreaLabel[];
-};
+import {
+  loadMapGeography,
+  type AreaLabel,
+  type MapGeographyPayload,
+  type PlaceLabel,
+} from '../mapGeography';
 
 type DrawLabel = {
   key: string;
@@ -62,7 +42,7 @@ function areaIsVisible(area: AreaLabel, zoom: number) {
   return true;
 }
 
-function buildLabels(payload: LabelPayload, zoom: number): DrawLabel[] {
+function buildLabels(payload: MapGeographyPayload, zoom: number): DrawLabel[] {
   const areas = [...payload.countries, ...payload.regions]
     .filter((area) => areaIsVisible(area, zoom))
     .map<DrawLabel>((area) => ({
@@ -112,15 +92,11 @@ function boxesOverlap(left: Box, right: Box) {
 
 export function MapLabelsLayer() {
   const map = useMap();
-  const [payload, setPayload] = useState<LabelPayload | null>(null);
+  const [payload, setPayload] = useState<MapGeographyPayload | null>(null);
 
   useEffect(() => {
     let active = true;
-    fetch('/maps/places.json')
-      .then((response) => {
-        if (!response.ok) throw new Error(`Не удалось загрузить подписи карты (${response.status})`);
-        return response.json() as Promise<LabelPayload>;
-      })
+    loadMapGeography()
       .then((data) => {
         if (active) setPayload(data);
       })
@@ -141,9 +117,16 @@ export function MapLabelsLayer() {
     const canvas = L.DomUtil.create('canvas', 'map-geographic-labels', pane) as HTMLCanvasElement;
     canvas.setAttribute('aria-hidden', 'true');
     canvas.style.pointerEvents = 'none';
+    const context = canvas.getContext('2d', { alpha: true, desynchronized: true });
+    if (!context) {
+      canvas.remove();
+      return undefined;
+    }
 
+    const labelsByZoom = new Map<string, DrawLabel[]>();
     let frame = 0;
     const render = () => {
+      const startedAt = performance.now();
       frame = 0;
       const size = map.getSize();
       const width = size.x + VIEW_PADDING * 2;
@@ -151,26 +134,36 @@ export function MapLabelsLayer() {
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       const topLeft = map.containerPointToLayerPoint([-VIEW_PADDING, -VIEW_PADDING]);
       L.DomUtil.setPosition(canvas, topLeft);
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
-      canvas.width = Math.round(width * ratio);
-      canvas.height = Math.round(height * ratio);
+      const pixelWidth = Math.round(width * ratio);
+      const pixelHeight = Math.round(height * ratio);
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
+      }
 
-      const context = canvas.getContext('2d');
-      if (!context) return;
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, width, height);
       context.lineJoin = 'round';
       context.textBaseline = 'middle';
 
       const zoom = map.getZoom();
-      const labels = buildLabels(payload, zoom);
+      const zoomKey = zoom.toFixed(2);
+      let labels = labelsByZoom.get(zoomKey);
+      if (!labels) {
+        labels = buildLabels(payload, zoom);
+        labelsByZoom.set(zoomKey, labels);
+      }
+      const visibleBounds = map.getBounds().pad(0.35);
       const occupied = new Map<string, Box[]>();
       const accepted: Array<{ label: DrawLabel; point: L.Point; box: Box; font: string }> = [];
 
       for (const label of labels) {
         if (accepted.length >= MAX_VISIBLE_LABELS) break;
-        const layerPoint = map.latLngToLayerPoint([MAP_HEIGHT - label.y, label.x]);
+        const position = L.latLng(MAP_HEIGHT - label.y, label.x);
+        if (!visibleBounds.contains(position)) continue;
+        const layerPoint = map.latLngToLayerPoint(position);
         const point = layerPoint.subtract(topLeft);
         if (point.x < -80 || point.y < -30 || point.x > width + 80 || point.y > height + 30) continue;
 
@@ -226,16 +219,18 @@ export function MapLabelsLayer() {
         }
       }
       canvas.dataset.visibleLabels = String(accepted.length);
+      canvas.dataset.zoom = zoom.toFixed(2);
+      canvas.dataset.renderMs = (performance.now() - startedAt).toFixed(1);
     };
 
     const scheduleRender = () => {
       if (!frame) frame = window.requestAnimationFrame(render);
     };
-    map.on('moveend zoomend resize viewreset', scheduleRender);
+    map.on('zoom zoomend moveend resize viewreset', scheduleRender);
     render();
 
     return () => {
-      map.off('moveend zoomend resize viewreset', scheduleRender);
+      map.off('zoom zoomend moveend resize viewreset', scheduleRender);
       if (frame) window.cancelAnimationFrame(frame);
       canvas.remove();
     };
