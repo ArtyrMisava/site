@@ -548,6 +548,7 @@ function MapObject({
   focused,
   editable,
   draggable,
+  mapClickMode,
   onEdit,
   onMove,
 }: {
@@ -555,6 +556,7 @@ function MapObject({
   focused: boolean;
   editable: boolean;
   draggable: boolean;
+  mapClickMode: boolean;
   onEdit: (item: MapItem) => void;
   onMove: (id: string, lat: number, lng: number) => void;
 }) {
@@ -592,6 +594,7 @@ function MapObject({
       position={[item.lat, item.lng]}
       icon={icon}
       draggable={draggable}
+      interactive={!mapClickMode}
       riseOnHover
       eventHandlers={eventHandlers}
       zIndexOffset={item.kind === 'vehicle' ? 80 : 40}
@@ -712,6 +715,7 @@ export function MapView({
               && (item.kind === 'vehicle' || excelConnected)
               && !(item.kind === 'vehicle' && item.status === 'moving' && item.route.length > 1)
             }
+            mapClickMode={placement !== null || routeDraft !== null}
             onEdit={onEdit}
             onMove={onMove}
           />

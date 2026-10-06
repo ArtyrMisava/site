@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CarFront,
   Crosshair,
@@ -7,6 +7,7 @@ import {
   LogOut,
   MapPin,
   Menu,
+  Monitor,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -14,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { AdminModal } from './components/AdminModal';
+import { DetachedMapWindow } from './components/DetachedMapWindow';
 import { EditorPanel } from './components/EditorPanel';
 import { ExcelWorkbookModal } from './components/ExcelWorkbookModal';
 import { MapView } from './components/MapView';
@@ -29,6 +31,14 @@ import {
   STORAGE_KEY,
 } from './data';
 import { useExcelWorkbook } from './hooks/useExcelWorkbook';
+import {
+  isMapWindowMessage,
+  MAP_WINDOW_CHANNEL,
+  MAP_WINDOW_NAME,
+  MAP_WINDOW_QUERY,
+  type DetachedMapState,
+  type MapWindowMessage,
+} from './mapWindowSync';
 import type {
   EditorState,
   ItemFilter,
@@ -133,7 +143,7 @@ function routePointsDiffer(left: RoutePoint, right: RoutePoint): boolean {
   return Math.hypot(left.lat - right.lat, left.lng - right.lng) >= 1;
 }
 
-export default function App() {
+function MainApp() {
   const [items, setItems] = useState<MapItem[]>(loadItems);
   const [filter, setFilter] = useState<ItemFilter>('all');
   const [search, setSearch] = useState('');
@@ -147,7 +157,13 @@ export default function App() {
   const [adminModalOpen, setAdminModalOpen] = useState(false);
   const [workbookModalOpen, setWorkbookModalOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [detachedMapOpen, setDetachedMapOpen] = useState(false);
   const [toast, setToast] = useState('');
+  const mapChannelRef = useRef<BroadcastChannel | null>(null);
+  const detachedWindowRef = useRef<Window | null>(null);
+  const lastDetachedContactRef = useRef(0);
+  const detachedStateRef = useRef<DetachedMapState | null>(null);
+  const mapMessageHandlerRef = useRef<(message: unknown) => void>(() => undefined);
   const excel = useExcelWorkbook();
 
   const isAdmin = adminName !== null;
@@ -215,6 +231,16 @@ export default function App() {
       item.id === editor.item.id && item.kind === 'vehicle',
     );
   }, [editor, items]);
+
+  detachedStateRef.current = {
+    items: filteredItems,
+    focusedId: visibleFocusedItem?.id ?? null,
+    placement,
+    routeDraft: routeBuilder?.points ?? null,
+    routeVehicleId: routeBuilder?.vehicleId ?? null,
+    isAdmin,
+    excelConnected: excel.isConnected,
+  };
 
   function cancelRouteBuilder(showToast = true) {
     if (!routeBuilder) return;
@@ -533,6 +559,152 @@ export default function App() {
     setToast('Режим администратора выключен');
   }
 
+  function postToDetachedMap(message: MapWindowMessage) {
+    if (mapChannelRef.current) {
+      mapChannelRef.current.postMessage(message);
+      return;
+    }
+    const detachedWindow = detachedWindowRef.current;
+    if (detachedWindow && !detachedWindow.closed) {
+      detachedWindow.postMessage(message, window.location.origin);
+    }
+  }
+
+  function sendDetachedMapState() {
+    if (!detachedStateRef.current) return;
+    postToDetachedMap({ type: 'controller-state', state: detachedStateRef.current });
+  }
+
+  function openDetachedMap() {
+    const existingWindow = detachedWindowRef.current;
+    if (existingWindow && !existingWindow.closed) {
+      existingWindow.focus();
+      sendDetachedMapState();
+      setDetachedMapOpen(true);
+      return;
+    }
+
+    const detachedUrl = new URL(window.location.href);
+    detachedUrl.searchParams.set(MAP_WINDOW_QUERY, '1');
+    detachedUrl.hash = '';
+    const openedWindow = window.open(
+      detachedUrl.toString(),
+      MAP_WINDOW_NAME,
+      'popup=yes,width=1280,height=800,resizable=yes,scrollbars=no',
+    );
+    if (!openedWindow) {
+      setToast('Браузер заблокировал отдельное окно карты. Разрешите всплывающие окна для этого сайта.');
+      return;
+    }
+    detachedWindowRef.current = openedWindow;
+    lastDetachedContactRef.current = Date.now();
+    setDetachedMapOpen(true);
+    openedWindow.focus();
+    window.setTimeout(sendDetachedMapState, 300);
+  }
+
+  mapMessageHandlerRef.current = (value: unknown) => {
+    if (!isMapWindowMessage(value)) return;
+    switch (value.type) {
+      case 'detached-ready':
+      case 'request-state':
+        lastDetachedContactRef.current = Date.now();
+        setDetachedMapOpen(true);
+        sendDetachedMapState();
+        break;
+      case 'detached-heartbeat':
+        lastDetachedContactRef.current = Date.now();
+        setDetachedMapOpen(true);
+        break;
+      case 'detached-closing':
+        lastDetachedContactRef.current = 0;
+        setDetachedMapOpen(false);
+        detachedWindowRef.current = null;
+        break;
+      case 'focus-controller':
+        window.focus();
+        break;
+      case 'map-place':
+        if (Number.isFinite(value.lat) && Number.isFinite(value.lng)) {
+          const opensEditor = routeBuilder === null && placement !== null;
+          handlePlace(value.lat, value.lng);
+          if (opensEditor) window.focus();
+        }
+        break;
+      case 'map-edit': {
+        const item = items.find((candidate) => candidate.id === value.id);
+        if (item) {
+          handleEdit(item);
+          window.focus();
+        }
+        break;
+      }
+      case 'map-move':
+        if (Number.isFinite(value.lat) && Number.isFinite(value.lng)) {
+          handleMove(value.id, value.lat, value.lng);
+        }
+        break;
+      case 'map-focus':
+        if (items.some((item) => item.id === value.id)) setFocusedId(value.id);
+        break;
+      case 'route-undo':
+        undoRoutePoint();
+        break;
+      case 'route-cancel':
+        cancelRouteBuilder();
+        break;
+      case 'route-start':
+        startVehicleRoute();
+        break;
+      default:
+        break;
+    }
+  };
+
+  useEffect(() => {
+    const receiveMessage = (message: unknown) => mapMessageHandlerRef.current(message);
+    let channel: BroadcastChannel | null = null;
+    if ('BroadcastChannel' in window) {
+      channel = new BroadcastChannel(MAP_WINDOW_CHANNEL);
+      mapChannelRef.current = channel;
+      channel.onmessage = (event: MessageEvent<unknown>) => receiveMessage(event.data);
+    }
+
+    const handleWindowMessage = (event: MessageEvent<unknown>) => {
+      if (event.origin !== window.location.origin) return;
+      receiveMessage(event.data);
+    };
+    window.addEventListener('message', handleWindowMessage);
+
+    const handleBeforeUnload = () => postToDetachedMap({ type: 'controller-closing' });
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    const heartbeatTimer = window.setInterval(() => {
+      const detachedWindow = detachedWindowRef.current;
+      const contactExpired = lastDetachedContactRef.current > 0
+        && Date.now() - lastDetachedContactRef.current > 5500;
+      if (detachedWindow?.closed || contactExpired) {
+        detachedWindowRef.current = null;
+        lastDetachedContactRef.current = 0;
+        setDetachedMapOpen(false);
+      } else {
+        postToDetachedMap({ type: 'controller-heartbeat' });
+      }
+    }, 2000);
+
+    return () => {
+      window.clearInterval(heartbeatTimer);
+      window.removeEventListener('message', handleWindowMessage);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      channel?.close();
+      mapChannelRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    sendDetachedMapState();
+  }, [excel.isConnected, filteredItems, isAdmin, placement, routeBuilder, visibleFocusedItem?.id]);
+
   const excelButtonLabel = excel.state.status === 'saving'
     ? 'Сохраняем Excel…'
     : excel.isConnected
@@ -571,6 +743,17 @@ export default function App() {
           </div>
 
           <div className="topbar-actions">
+            <button
+              className={`detached-map-button ${detachedMapOpen ? 'active' : ''}`}
+              type="button"
+              onClick={openDetachedMap}
+              aria-label={detachedMapOpen ? 'Перейти к отдельному окну карты' : 'Открыть карту в отдельном окне'}
+              title={detachedMapOpen ? 'Показать отдельное окно карты' : 'Открыть интерактивную карту для второго экрана'}
+            >
+              <Monitor size={16} />
+              <span>{detachedMapOpen ? 'Карта открыта' : 'Отдельная карта'}</span>
+              <i />
+            </button>
             <div className="offline-badge" title="Карта не использует интернет"><WifiOff size={15} /><span>Офлайн</span></div>
             {isAdmin ? (
               <div className="admin-session">
@@ -686,4 +869,9 @@ export default function App() {
       {toast && <div className="toast" role="status"><span><i /></span>{toast}</div>}
     </div>
   );
+}
+
+export default function App() {
+  const isDetachedMap = new URLSearchParams(window.location.search).get(MAP_WINDOW_QUERY) === '1';
+  return isDetachedMap ? <DetachedMapWindow /> : <MainApp />;
 }
