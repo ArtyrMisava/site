@@ -28,6 +28,7 @@ import {
   loadMapGeography,
   type MapGeographyPayload,
 } from '../mapGeography';
+import type { MapViewport } from '../mapWindowSync';
 import type {
   ItemKind,
   MapItem,
@@ -62,6 +63,8 @@ interface MapViewProps {
   onUndoRoutePoint: () => void;
   onCancelRoute: () => void;
   onStartRoute: () => void;
+  externalViewport?: MapViewport | null;
+  onViewportChange?: (viewport: MapViewport) => void;
 }
 
 function useItemLocationNames(items: MapItem[]): Map<string, string> {
@@ -288,6 +291,83 @@ function FitMapOnStart() {
       map.off('resize', keepInside);
     };
   }, [map]);
+
+  return null;
+}
+
+function ViewportController({
+  externalViewport,
+  onViewportChange,
+}: {
+  externalViewport: MapViewport | null;
+  onViewportChange?: (viewport: MapViewport) => void;
+}) {
+  const map = useMap();
+  const callbackRef = useRef(onViewportChange);
+  const applyingExternalViewRef = useRef(false);
+  const lastPublishedRef = useRef<MapViewport | null>(null);
+  callbackRef.current = onViewportChange;
+
+  useEffect(() => {
+    const publishViewport = () => {
+      if (applyingExternalViewRef.current || !callbackRef.current) return;
+      const center = map.getCenter();
+      const viewport: MapViewport = {
+        center: { lat: center.lat, lng: center.lng },
+        zoom: map.getZoom(),
+      };
+      const previous = lastPublishedRef.current;
+      if (
+        previous
+        && Math.abs(previous.center.lat - viewport.center.lat) < 0.0001
+        && Math.abs(previous.center.lng - viewport.center.lng) < 0.0001
+        && Math.abs(previous.zoom - viewport.zoom) < 0.0001
+      ) return;
+      lastPublishedRef.current = viewport;
+      callbackRef.current(viewport);
+    };
+
+    map.on('moveend zoomend', publishViewport);
+    const initialFrame = window.requestAnimationFrame(publishViewport);
+    return () => {
+      window.cancelAnimationFrame(initialFrame);
+      map.off('moveend zoomend', publishViewport);
+    };
+  }, [map]);
+
+  useEffect(() => {
+    if (!externalViewport) return;
+    const currentCenter = map.getCenter();
+    if (
+      Math.abs(currentCenter.lat - externalViewport.center.lat) < 0.0001
+      && Math.abs(currentCenter.lng - externalViewport.center.lng) < 0.0001
+      && Math.abs(map.getZoom() - externalViewport.zoom) < 0.0001
+    ) {
+      lastPublishedRef.current = {
+        center: { lat: currentCenter.lat, lng: currentCenter.lng },
+        zoom: map.getZoom(),
+      };
+      return;
+    }
+
+    applyingExternalViewRef.current = true;
+    try {
+      map.stop();
+      map.setView(
+        [externalViewport.center.lat, externalViewport.center.lng],
+        externalViewport.zoom,
+        { animate: false },
+      );
+      constrainMapToBounds(map);
+      const appliedCenter = map.getCenter();
+      lastPublishedRef.current = {
+        center: { lat: appliedCenter.lat, lng: appliedCenter.lng },
+        zoom: map.getZoom(),
+      };
+    } finally {
+      applyingExternalViewRef.current = false;
+    }
+  }, [externalViewport, map]);
 
   return null;
 }
@@ -648,6 +728,8 @@ export function MapView({
   onUndoRoutePoint,
   onCancelRoute,
   onStartRoute,
+  externalViewport = null,
+  onViewportChange,
 }: MapViewProps) {
   const routeVehicle = routeVehicleId
     ? items.find((item): item is VehiclePoint => item.id === routeVehicleId && item.kind === 'vehicle')
@@ -685,6 +767,10 @@ export function MapView({
         />
         <FitMapOnStart />
         <FocusController item={focusedItem} />
+        <ViewportController
+          externalViewport={externalViewport}
+          onViewportChange={onViewportChange}
+        />
         <PlacementHandler enabled={placement !== null || routeDraft !== null} onPlace={onPlace} />
         {items.map((item) => (
           <MapObject

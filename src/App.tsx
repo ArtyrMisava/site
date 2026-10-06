@@ -3,6 +3,7 @@ import {
   CarFront,
   Crosshair,
   FileSpreadsheet,
+  Link2,
   LockKeyhole,
   LogOut,
   MapPin,
@@ -11,6 +12,7 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  Unlink,
   WifiOff,
   X,
 } from 'lucide-react';
@@ -34,10 +36,12 @@ import {
 import { useExcelWorkbook } from './hooks/useExcelWorkbook';
 import {
   isMapWindowMessage,
+  MAP_VIEW_LINK_STORAGE_KEY,
   MAP_WINDOW_CHANNEL,
   MAP_WINDOW_NAME,
   MAP_WINDOW_QUERY,
   type DetachedMapState,
+  type MapViewport,
   type MapWindowMessage,
 } from './mapWindowSync';
 import type {
@@ -141,6 +145,10 @@ function routePointsDiffer(left: RoutePoint, right: RoutePoint): boolean {
   return Math.hypot(left.lat - right.lat, left.lng - right.lng) >= 1;
 }
 
+function loadViewLinkSetting(): boolean {
+  return localStorage.getItem(MAP_VIEW_LINK_STORAGE_KEY) !== 'false';
+}
+
 function MainApp() {
   const [items, setItems] = useState<MapItem[]>(loadItems);
   const [filter, setFilter] = useState<ItemFilter>('all');
@@ -156,6 +164,9 @@ function MainApp() {
   const [workbookModalOpen, setWorkbookModalOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [detachedMapOpen, setDetachedMapOpen] = useState(false);
+  const [viewLinked, setViewLinked] = useState(loadViewLinkSetting);
+  const [mainViewport, setMainViewport] = useState<MapViewport | null>(null);
+  const [remoteViewport, setRemoteViewport] = useState<MapViewport | null>(null);
   const [toast, setToast] = useState('');
   const mapChannelRef = useRef<BroadcastChannel | null>(null);
   const detachedWindowRef = useRef<Window | null>(null);
@@ -238,6 +249,8 @@ function MainApp() {
     routeVehicleId: routeBuilder?.vehicleId ?? null,
     isAdmin,
     excelConnected: excel.isConnected,
+    viewLinked,
+    viewport: mainViewport,
   };
 
   function cancelRouteBuilder(showToast = true) {
@@ -573,6 +586,28 @@ function MainApp() {
     postToDetachedMap({ type: 'controller-state', state: detachedStateRef.current });
   }
 
+  function handleMainViewportChange(viewport: MapViewport) {
+    setMainViewport(viewport);
+    if (viewLinked) {
+      postToDetachedMap({ type: 'map-view', source: 'controller', viewport });
+    }
+  }
+
+  function updateViewLink(linked: boolean, announce = true) {
+    localStorage.setItem(MAP_VIEW_LINK_STORAGE_KEY, String(linked));
+    setRemoteViewport(null);
+    setViewLinked(linked);
+    postToDetachedMap({ type: 'view-link-set', linked });
+    if (linked && mainViewport) {
+      postToDetachedMap({ type: 'map-view', source: 'controller', viewport: mainViewport });
+    }
+    if (announce) {
+      setToast(linked
+        ? 'Обзор карт связан: перемещение и масштаб синхронизируются'
+        : 'Включён независимый обзор карт');
+    }
+  }
+
   function openDetachedMap() {
     const existingWindow = detachedWindowRef.current;
     if (existingWindow && !existingWindow.closed) {
@@ -621,6 +656,15 @@ function MainApp() {
         break;
       case 'focus-controller':
         window.focus();
+        break;
+      case 'map-view':
+        if (value.source === 'detached' && viewLinked) {
+          setMainViewport(value.viewport);
+          setRemoteViewport(value.viewport);
+        }
+        break;
+      case 'view-link-set':
+        updateViewLink(value.linked);
         break;
       case 'map-place':
         if (Number.isFinite(value.lat) && Number.isFinite(value.lng)) {
@@ -701,7 +745,7 @@ function MainApp() {
 
   useEffect(() => {
     sendDetachedMapState();
-  }, [excel.isConnected, filteredItems, isAdmin, placement, routeBuilder, visibleFocusedItem?.id]);
+  }, [excel.isConnected, filteredItems, isAdmin, placement, routeBuilder, viewLinked, visibleFocusedItem?.id]);
 
   const excelButtonLabel = excel.state.status === 'saving'
     ? 'Сохраняем Excel…'
@@ -752,6 +796,22 @@ function MainApp() {
               <span>{detachedMapOpen ? 'Карта открыта' : 'Отдельная карта'}</span>
               <i />
             </button>
+            {detachedMapOpen && (
+              <button
+                className={`map-view-link-button ${viewLinked ? 'linked' : 'independent'}`}
+                type="button"
+                onClick={() => updateViewLink(!viewLinked)}
+                aria-label={viewLinked ? 'Отключить привязку обзора карт' : 'Связать обзор основной и отдельной карт'}
+                aria-pressed={viewLinked}
+                title={viewLinked
+                  ? 'Карты связаны: отключить синхронизацию перемещения и масштаба'
+                  : 'Независимый обзор: связать перемещение и масштаб карт'}
+                data-view-linked={viewLinked ? 'true' : 'false'}
+              >
+                {viewLinked ? <Link2 size={15} /> : <Unlink size={15} />}
+                <span>{viewLinked ? 'Карты связаны' : 'Независимый обзор'}</span>
+              </button>
+            )}
             <div className="offline-badge" title="Карта не использует интернет"><WifiOff size={15} /><span>Офлайн</span></div>
             {isAdmin ? (
               <div className="admin-session">
@@ -819,6 +879,8 @@ function MainApp() {
             onUndoRoutePoint={undoRoutePoint}
             onCancelRoute={() => cancelRouteBuilder()}
             onStartRoute={startVehicleRoute}
+            externalViewport={viewLinked ? remoteViewport : null}
+            onViewportChange={handleMainViewportChange}
           />
 
           {editor && (
