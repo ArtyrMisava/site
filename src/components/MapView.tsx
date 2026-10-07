@@ -29,10 +29,10 @@ import {
   type MapGeographyPayload,
 } from '../mapGeography';
 import type { MapViewport } from '../mapWindowSync';
+import { placeIconSource } from '../placeIcons';
 import type {
   ItemKind,
   MapItem,
-  PersonPoint,
   RoutePoint,
   VehiclePoint,
 } from '../types';
@@ -117,12 +117,6 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#039;');
 }
 
-function personInitials(item: PersonPoint): string {
-  const words = item.pointName.trim().split(/\s+/).filter(Boolean);
-  const initials = words.slice(0, 2).map((word) => word.charAt(0)).join('');
-  return escapeHtml(initials.toLocaleUpperCase('ru-RU') || '•');
-}
-
 function markerIcon(item: MapItem, focused: boolean, locationName: string): L.DivIcon {
   const focusClass = focused ? ' is-focused' : '';
   const locationBadge = locationName
@@ -130,6 +124,7 @@ function markerIcon(item: MapItem, focused: boolean, locationName: string): L.Di
     : '';
 
   if (item.kind === 'person') {
+    const iconSource = placeIconSource(item.placeIcon);
     return L.divIcon({
       className: 'leaflet-object-icon',
       iconSize: [92, 92],
@@ -140,7 +135,9 @@ function markerIcon(item: MapItem, focused: boolean, locationName: string): L.Di
           ${locationBadge}
           <span class="marker-proximity"></span>
           <span class="person-pin">
-            <span class="person-pin-core">${personInitials(item)}</span>
+            <span class="person-pin-core has-place-icon">
+              <img src="${escapeHtml(iconSource)}" alt="" draggable="false" />
+            </span>
           </span>
           <span class="marker-caption">${escapeHtml(item.pointName || 'Новая точка')}</span>
         </div>

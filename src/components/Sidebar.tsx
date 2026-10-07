@@ -8,6 +8,7 @@ import {
   X,
 } from 'lucide-react';
 import { itemSubtitle, itemTitle } from '../data';
+import { placeIconSource } from '../placeIcons';
 import type { ItemFilter, MapItem } from '../types';
 
 interface SidebarProps {
@@ -164,7 +165,9 @@ export function Sidebar({
                   }}
                 >
                   <span className={`list-item-icon ${item.kind}`}>
-                    {item.kind === 'person' ? <MapPin size={18} /> : <CarFront size={19} />}
+                    {item.kind === 'person'
+                      ? <img src={placeIconSource(item.placeIcon)} alt="" />
+                      : <CarFront size={19} />}
                   </span>
                   <span className="list-item-copy">
                     <strong>{itemTitle(item)}</strong>

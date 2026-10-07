@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   CarFront,
   FileSpreadsheet,
+  ImagePlus,
   Link2,
   MapPin,
   Navigation,
@@ -17,6 +18,13 @@ import {
   X,
 } from 'lucide-react';
 import { MAP_HEIGHT } from '../data';
+import {
+  BUILT_IN_PLACE_ICONS,
+  DEFAULT_PLACE_ICON,
+  MAX_CUSTOM_PLACE_ICON_LENGTH,
+  isCustomPlaceIcon,
+  placeIconSource,
+} from '../placeIcons';
 import type {
   EditorState,
   MapItem,
@@ -45,6 +53,56 @@ const vehicleStatuses: Array<{ value: VehicleStatus; label: string }> = [
   { value: 'service', label: 'Обслуживание' },
 ];
 
+const CUSTOM_ICON_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']);
+const MAX_CUSTOM_ICON_FILE_SIZE = 5_000_000;
+
+async function rasterizePlaceIcon(file: File): Promise<string> {
+  if (!CUSTOM_ICON_TYPES.has(file.type)) {
+    throw new Error('Выберите иконку PNG, JPG, WebP или SVG.');
+  }
+  if (file.size > MAX_CUSTOM_ICON_FILE_SIZE) {
+    throw new Error('Файл иконки должен быть не больше 5 МБ.');
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = objectUrl;
+    try {
+      await image.decode();
+    } catch {
+      throw new Error('Не удалось прочитать изображение.');
+    }
+    if (!image.naturalWidth || !image.naturalHeight) {
+      throw new Error('Не удалось прочитать изображение.');
+    }
+    if (image.naturalWidth * image.naturalHeight > 40_000_000) {
+      throw new Error('У изображения слишком большое разрешение.');
+    }
+
+    for (const [size, quality] of [[96, 0.82], [72, 0.74], [56, 0.68]] as const) {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Браузер не поддерживает обработку иконки.');
+      const padding = Math.max(3, Math.round(size * 0.06));
+      const scale = Math.min(
+        (size - padding * 2) / image.naturalWidth,
+        (size - padding * 2) / image.naturalHeight,
+      );
+      const width = image.naturalWidth * scale;
+      const height = image.naturalHeight * scale;
+      context.drawImage(image, (size - width) / 2, (size - height) / 2, width, height);
+      const dataUrl = canvas.toDataURL('image/webp', quality);
+      if (dataUrl.length <= MAX_CUSTOM_PLACE_ICON_LENGTH) return dataUrl;
+    }
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+  throw new Error('Иконка получилась слишком большой. Выберите более простое изображение.');
+}
+
 function newPersonnelEntry(): PersonnelEntry {
   return {
     id: crypto.randomUUID?.() ?? `person-${Date.now()}`,
@@ -69,11 +127,13 @@ export function EditorPanel({
   const [draft, setDraft] = useState<MapItem>(editor.item);
   const [error, setError] = useState('');
   const [statusEdited, setStatusEdited] = useState(false);
+  const [iconUploading, setIconUploading] = useState(false);
 
   useEffect(() => {
     setDraft(editor.item);
     setError('');
     setStatusEdited(false);
+    setIconUploading(false);
   }, [editor]);
 
   const routeVehicle = draft.kind === 'vehicle' ? (vehicleRuntime ?? draft) : null;
@@ -88,6 +148,28 @@ export function EditorPanel({
   );
   const automaticHeading = Boolean(hasRoute && routeVehicle?.status === 'moving');
   const displayedHeading = automaticHeading && routeVehicle ? routeVehicle.heading : draft.kind === 'vehicle' ? draft.heading : 0;
+
+  function selectPlaceIcon(placeIcon: string) {
+    setDraft((current) => current.kind === 'person' ? { ...current, placeIcon } : current);
+    setError('');
+  }
+
+  async function uploadPlaceIcon(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    setIconUploading(true);
+    setError('');
+    try {
+      const placeIcon = await rasterizePlaceIcon(file);
+      setDraft((current) => current.kind === 'person' ? { ...current, placeIcon } : current);
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Не удалось добавить иконку.');
+    } finally {
+      input.value = '';
+      setIconUploading(false);
+    }
+  }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -199,7 +281,9 @@ export function EditorPanel({
     <aside className="editor-panel" aria-label="Редактор объекта">
       <div className="editor-header">
         <div className={`editor-kind-icon ${draft.kind}`} aria-hidden="true">
-          {draft.kind === 'person' ? <MapPin size={20} /> : <CarFront size={21} />}
+          {draft.kind === 'person'
+            ? <img src={placeIconSource(draft.placeIcon)} alt="" />
+            : <CarFront size={21} />}
         </div>
         <div>
           <p className="eyebrow">
@@ -207,7 +291,7 @@ export function EditorPanel({
           </p>
           <h2>{draft.kind === 'person' ? 'Точка и сотрудники' : 'Служебная машина'}</h2>
         </div>
-        <button className="icon-button editor-close" type="button" onClick={onCancel} aria-label="Закрыть редактор" disabled={saving}>
+        <button className="icon-button editor-close" type="button" onClick={onCancel} aria-label="Закрыть редактор" disabled={saving || iconUploading}>
           <X size={19} />
         </button>
       </div>
@@ -230,6 +314,60 @@ export function EditorPanel({
                 autoFocus
               />
             </label>
+
+            <section className="place-icon-editor" aria-labelledby="place-icon-heading">
+              <div className="place-icon-heading">
+                <span><ImagePlus size={17} /></span>
+                <div>
+                  <strong id="place-icon-heading">Иконка точки</strong>
+                  <small>Выберите готовую или загрузите свою</small>
+                </div>
+              </div>
+              <div className="place-icon-grid" role="group" aria-label="Готовые иконки точки">
+                {BUILT_IN_PLACE_ICONS.map((icon) => (
+                  <button
+                    key={icon.id}
+                    className={draft.placeIcon === icon.id ? 'selected' : ''}
+                    type="button"
+                    onClick={() => selectPlaceIcon(icon.id)}
+                    aria-pressed={draft.placeIcon === icon.id}
+                    title={icon.label}
+                  >
+                    <img src={icon.source} alt="" />
+                    <span>{icon.label}</span>
+                  </button>
+                ))}
+                {isCustomPlaceIcon(draft.placeIcon) && (
+                  <button
+                    className="selected custom"
+                    type="button"
+                    aria-pressed="true"
+                    title="Пользовательская иконка"
+                  >
+                    <img src={draft.placeIcon} alt="" />
+                    <span>Своя</span>
+                  </button>
+                )}
+              </div>
+              <div className="place-icon-actions">
+                <label className={`place-icon-upload ${iconUploading ? 'disabled' : ''}`}>
+                  <ImagePlus size={15} />
+                  <span>{iconUploading ? 'Обработка…' : 'Загрузить свою'}</span>
+                  <input
+                    type="file"
+                    accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml"
+                    onChange={uploadPlaceIcon}
+                    disabled={iconUploading}
+                  />
+                </label>
+                {isCustomPlaceIcon(draft.placeIcon) && (
+                  <button type="button" onClick={() => selectPlaceIcon(DEFAULT_PLACE_ICON)}>
+                    Вернуть метку
+                  </button>
+                )}
+              </div>
+              <small className="place-icon-hint">PNG, JPG, WebP или SVG до 5 МБ. Иконка хранится локально и работает без интернета.</small>
+            </section>
 
             {excelConnected && (
               <div className={`excel-editor-link ${draft.sheetName ? 'linked' : 'new'}`}>
@@ -432,9 +570,9 @@ export function EditorPanel({
         {error && <p className="form-error">{error}</p>}
 
         <div className="editor-actions">
-          <button className="primary-button" type="submit" disabled={saving}>
+          <button className="primary-button" type="submit" disabled={saving || iconUploading}>
             <Save size={17} />
-            {saving ? 'Сохраняем…' : editor.mode === 'create' ? 'Добавить на карту' : 'Сохранить изменения'}
+            {iconUploading ? 'Обрабатываем иконку…' : saving ? 'Сохраняем…' : editor.mode === 'create' ? 'Добавить на карту' : 'Сохранить изменения'}
           </button>
           {editor.mode === 'edit' && (
             <button className="danger-button" type="button" onClick={requestDelete} disabled={saving}>

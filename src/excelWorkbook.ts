@@ -5,6 +5,7 @@ import {
   MAP_WIDTH,
   migrateLegacyMapCoordinates,
 } from './data';
+import { DEFAULT_PLACE_ICON, normalizePlaceIcon } from './placeIcons';
 import type { PersonnelEntry, PersonPoint } from './types';
 
 const SERVICE_SHEET_NAME = '_Карта';
@@ -44,6 +45,7 @@ interface IndexRecord {
   sheetName: string;
   lng: number | null;
   mapY: number | null;
+  placeIcon: string | null;
 }
 
 export function supportsExcelFileLink(): boolean {
@@ -84,6 +86,9 @@ function readIndex(workbook: Workbook): IndexRecord[] {
       sheetName,
       lng: coordinate(row.getCell(3).value, MAP_WIDTH),
       mapY: coordinate(row.getCell(4).value, MAP_HEIGHT),
+      placeIcon: row.getCell(5).text.trim()
+        ? normalizePlaceIcon(row.getCell(5).text)
+        : null,
     });
   }
 
@@ -207,7 +212,7 @@ function ensureServiceSheet(workbook: Workbook, points: PersonPoint[]) {
   if (existingSheet) workbook.removeWorksheet(existingSheet.id);
   const sheet = workbook.addWorksheet(SERVICE_SHEET_NAME);
 
-  sheet.addRow(['ID', 'Лист', 'X', 'Y']);
+  sheet.addRow(['ID', 'Лист', 'X', 'Y', 'Иконка']);
   sheet.getCell(MAP_VERSION_CELL).value = MAP_COORDINATE_VERSION;
   sheet.getColumn(6).hidden = true;
   points
@@ -218,6 +223,7 @@ function ensureServiceSheet(workbook: Workbook, points: PersonPoint[]) {
         point.sheetName || point.pointName,
         Math.round(point.lng),
         Math.round(MAP_HEIGHT - point.lat),
+        normalizePlaceIcon(point.placeIcon),
       ]);
     });
 
@@ -228,6 +234,7 @@ function ensureServiceSheet(workbook: Workbook, points: PersonPoint[]) {
     { key: 'sheet', width: 32 },
     { key: 'x', width: 12 },
     { key: 'y', width: 12 },
+    { key: 'icon', width: 18 },
   ];
   sheet.state = points.length > 0 ? 'veryHidden' : 'visible';
 }
@@ -309,6 +316,7 @@ export function readWorkbookPoints(
       id: existing?.id ?? `excel-point-${excelId}`,
       kind: 'person',
       pointName: worksheet.name,
+      placeIcon: indexed?.placeIcon ?? existing?.placeIcon ?? DEFAULT_PLACE_ICON,
       personnel: readPersonnel(worksheet, excelId),
       excelId,
       sheetName: worksheet.name,

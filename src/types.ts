@@ -19,6 +19,7 @@ export interface PersonnelEntry {
 export interface PersonPoint extends BaseMapItem {
   kind: 'person';
   pointName: string;
+  placeIcon: string;
   personnel: PersonnelEntry[];
   excelId?: string;
   sheetName?: string;

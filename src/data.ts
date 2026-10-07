@@ -1,3 +1,4 @@
+import { DEFAULT_PLACE_ICON, normalizePlaceIcon } from './placeIcons';
 import type {
   MapItem,
   PersonnelEntry,
@@ -56,6 +57,7 @@ export const seedItems: MapItem[] = [
     id: 'point-office',
     kind: 'person',
     pointName: 'Центральный офис',
+    placeIcon: 'office',
     personnel: [
       { id: 'person-ivan-petrov', fullName: 'Иван Петров', position: 'Руководитель смены' },
     ],
@@ -68,6 +70,7 @@ export const seedItems: MapItem[] = [
     id: 'point-warehouse',
     kind: 'person',
     pointName: 'Склад № 2',
+    placeIcon: 'warehouse',
     personnel: [
       { id: 'person-anna-sokolova', fullName: 'Анна Соколова', position: 'Кладовщик' },
     ],
@@ -80,6 +83,7 @@ export const seedItems: MapItem[] = [
     id: 'point-gate',
     kind: 'person',
     pointName: 'Западное КПП',
+    placeIcon: 'checkpoint',
     personnel: [
       { id: 'person-mikhail-orlov', fullName: 'Михаил Орлов', position: 'Дежурный' },
     ],
@@ -156,6 +160,7 @@ function normalizePoint(value: Record<string, unknown>): PersonPoint {
     id: String(value.id ?? crypto.randomUUID?.() ?? `point-${Date.now()}`),
     kind: 'person',
     pointName: String(value.pointName ?? value.sheetName ?? 'Точка').trim() || 'Точка',
+    placeIcon: normalizePlaceIcon(value.placeIcon),
     personnel,
     excelId: value.excelId ? String(value.excelId) : undefined,
     sheetName: value.sheetName ? String(value.sheetName) : undefined,
@@ -280,6 +285,7 @@ export function makeDraft(kind: 'person' | 'vehicle', lat: number, lng: number):
       ...base,
       kind,
       pointName: '',
+      placeIcon: DEFAULT_PLACE_ICON,
       personnel: [],
     };
   }

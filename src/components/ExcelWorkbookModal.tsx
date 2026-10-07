@@ -123,7 +123,7 @@ export function ExcelWorkbookModal({
               <div className="workbook-benefits">
                 <div><Save size={18} /><p><strong>Автосохранение</strong><span>Создание, перемещение и удаление точек записываются в этот же файл.</span></p></div>
                 <div><UsersRound size={18} /><p><strong>Данные сотрудников</strong><span>Столбец A — ФИО, столбец B — звание или должность.</span></p></div>
-                <div><ShieldCheck size={18} /><p><strong>Надёжная связь</strong><span>Скрытый лист «_Карта» хранит ID и координаты ярлыков.</span></p></div>
+                <div><ShieldCheck size={18} /><p><strong>Надёжная связь</strong><span>Скрытый лист «_Карта» хранит ID, координаты и иконки ярлыков.</span></p></div>
               </div>
 
               <div className="workbook-actions-card">
