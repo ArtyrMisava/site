@@ -4,8 +4,15 @@ cd /d "%~dp0"
 chcp 65001 >nul
 title DUS - Reset Administrator Access
 
-if not exist "%~dp0runtime\DUS_SERVER.exe" (
-  echo ERROR: runtime\DUS_SERVER.exe is missing.
+if not exist "%~dp0runtime\node.exe" (
+  echo ERROR: runtime\node.exe is missing.
+  echo Reinstall the current DUS update package.
+  echo.
+  pause
+  exit /b 1
+)
+if not exist "%~dp0server\dus-server.cjs" (
+  echo ERROR: server\dus-server.cjs is missing.
   echo Reinstall the current DUS update package.
   echo.
   pause
@@ -31,8 +38,8 @@ if /I not "%DUS_CONFIRM%"=="RESET" (
   exit /b 0
 )
 
-taskkill /F /IM DUS_SERVER.exe >nul 2>&1
-"%~dp0runtime\DUS_SERVER.exe" --data "%~dp0site-data\dus-data.json" --reset-admin
+taskkill /F /T /FI "WINDOWTITLE eq DUS - Local Map" >nul 2>&1
+"%~dp0runtime\node.exe" "%~dp0server\dus-server.cjs" --data "%~dp0site-data\dus-data.json" --reset-admin
 set "DUS_EXIT_CODE=%ERRORLEVEL%"
 echo.
 if "%DUS_EXIT_CODE%"=="0" (

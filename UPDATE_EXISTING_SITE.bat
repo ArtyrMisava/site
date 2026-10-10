@@ -6,7 +6,8 @@ title DUS - Update Existing Installation
 
 set "DUS_SOURCE=%~dp0"
 if not exist "%DUS_SOURCE%offline-site\index.html" goto source_error
-if not exist "%DUS_SOURCE%runtime\DUS_SERVER.exe" goto source_error
+if not exist "%DUS_SOURCE%runtime\node.exe" goto source_error
+if not exist "%DUS_SOURCE%server\dus-server.cjs" goto source_error
 
 echo ============================================================
 echo DUS - UPDATE EXISTING INSTALLATION
@@ -31,7 +32,7 @@ echo The site-data folder will NOT be replaced.
 echo Browser data from an older version will migrate on first launch.
 pause
 
-taskkill /F /IM DUS_SERVER.exe >nul 2>&1
+taskkill /F /T /FI "WINDOWTITLE eq DUS - Local Map" >nul 2>&1
 
 if exist "%DUS_TARGET%\update-backup" rmdir /S /Q "%DUS_TARGET%\update-backup"
 mkdir "%DUS_TARGET%\update-backup" >nul 2>&1
@@ -42,6 +43,8 @@ if exist "%DUS_TARGET%\START_SITE_WINDOWS.bat" copy /Y "%DUS_TARGET%\START_SITE_
 robocopy "%DUS_SOURCE%offline-site" "%DUS_TARGET%\offline-site" /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP >nul
 if errorlevel 8 goto copy_error
 robocopy "%DUS_SOURCE%runtime" "%DUS_TARGET%\runtime" /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP >nul
+if errorlevel 8 goto copy_error
+robocopy "%DUS_SOURCE%server" "%DUS_TARGET%\server" /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP >nul
 if errorlevel 8 goto copy_error
 if not exist "%DUS_TARGET%\scripts" mkdir "%DUS_TARGET%\scripts" >nul 2>&1
 copy /Y "%DUS_SOURCE%scripts\local-server.ps1" "%DUS_TARGET%\scripts\local-server.ps1" >nul

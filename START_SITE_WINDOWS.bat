@@ -12,7 +12,7 @@ if not exist "%~dp0offline-site\index.html" (
   exit /b 1
 )
 
-if exist "%~dp0runtime\DUS_SERVER.exe" goto native_server
+if exist "%~dp0runtime\node.exe" if exist "%~dp0server\dus-server.cjs" goto native_server
 
 echo WARNING: Portable DUS Server is missing.
 echo Falling back to the PowerShell compatibility server.
@@ -22,7 +22,7 @@ set "DUS_EXIT_CODE=%ERRORLEVEL%"
 goto finished
 
 :native_server
-"%~dp0runtime\DUS_SERVER.exe" --root "%~dp0offline-site" --data "%~dp0site-data\dus-data.json" --port 4173
+"%~dp0runtime\node.exe" "%~dp0server\dus-server.cjs" --root "%~dp0offline-site" --data "%~dp0site-data\dus-data.json" --port 4173
 set "DUS_EXIT_CODE=%ERRORLEVEL%"
 
 :finished

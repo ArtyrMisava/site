@@ -1,2 +1,3 @@
 # Windows command launchers must keep CRLF line endings in GitHub ZIP archives.
 *.bat -text whitespace=cr-at-eol
+runtime/NODE_LICENSE.txt whitespace=-space-before-tab
