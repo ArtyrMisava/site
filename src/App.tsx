@@ -23,6 +23,7 @@ import { ExcelWorkbookModal } from './components/ExcelWorkbookModal';
 import { MapView } from './components/MapView';
 import { Sidebar } from './components/Sidebar';
 import { SESSION_KEY } from './auth';
+import { setPersistentItem } from './siteStorage';
 import {
   itemSubtitle,
   itemTitle,
@@ -208,7 +209,7 @@ function MainApp() {
   }, [hasMovingVehicles]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    setPersistentItem(STORAGE_KEY, JSON.stringify(items));
   }, [items]);
 
   useEffect(() => {
@@ -594,7 +595,7 @@ function MainApp() {
   }
 
   function updateViewLink(linked: boolean, announce = true) {
-    localStorage.setItem(MAP_VIEW_LINK_STORAGE_KEY, String(linked));
+    setPersistentItem(MAP_VIEW_LINK_STORAGE_KEY, String(linked));
     setRemoteViewport(null);
     setViewLinked(linked);
     postToDetachedMap({ type: 'view-link-set', linked });

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import L from 'leaflet';
 import { useMap } from 'react-leaflet';
 import { MAP_HEIGHT } from '../data';
+import { labelZoomForMode, type MapLayerMode } from '../mapLayers';
 import {
   findSettlementsInBounds,
   loadMapGeography,
@@ -89,7 +90,7 @@ function boxesOverlap(left: Box, right: Box) {
   return left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
 }
 
-export function MapLabelsLayer() {
+export function MapLabelsLayer({ mode }: { mode: MapLayerMode }) {
   const map = useMap();
   const [payload, setPayload] = useState<MapGeographyPayload | null>(null);
 
@@ -146,7 +147,8 @@ export function MapLabelsLayer() {
       context.lineJoin = 'round';
       context.textBaseline = 'middle';
 
-      const zoom = map.getZoom();
+      const mapZoom = map.getZoom();
+      const labelZoom = labelZoomForMode(mode, mapZoom);
       const visibleBounds = map.getBounds().pad(0.18);
       const visiblePlaces = findSettlementsInBounds(
         payload,
@@ -156,7 +158,7 @@ export function MapLabelsLayer() {
         MAP_HEIGHT - visibleBounds.getSouth(),
       );
       const queriedAt = performance.now();
-      const labels = buildLabels(payload, visiblePlaces, zoom);
+      const labels = buildLabels(payload, visiblePlaces, labelZoom);
       const labelsBuiltAt = performance.now();
       const occupied = new Map<number, Box[]>();
       const accepted: Array<{
@@ -166,9 +168,9 @@ export function MapLabelsLayer() {
         font: string;
       }> = [];
       const pixelOrigin = map.getPixelOrigin();
-      const projectedOrigin = map.project([0, 0], zoom);
-      const xScale = map.project([0, 1], zoom).x - projectedOrigin.x;
-      const yScale = map.project([1, 0], zoom).y - projectedOrigin.y;
+      const projectedOrigin = map.project([0, 0], mapZoom);
+      const xScale = map.project([0, 1], mapZoom).x - projectedOrigin.x;
+      const yScale = map.project([1, 0], mapZoom).y - projectedOrigin.y;
 
       for (const label of labels) {
         if (accepted.length >= MAX_VISIBLE_LABELS) break;
@@ -251,7 +253,9 @@ export function MapLabelsLayer() {
       canvas.dataset.visibleSettlements = String(accepted.filter(({ label }) => label.kind === 'place').length);
       canvas.dataset.candidateSettlements = String(visiblePlaces.length);
       canvas.dataset.totalSettlements = String(payload.places.length);
-      canvas.dataset.zoom = zoom.toFixed(2);
+      canvas.dataset.zoom = mapZoom.toFixed(2);
+      canvas.dataset.labelZoom = labelZoom.toFixed(2);
+      canvas.dataset.layerMode = mode;
       canvas.dataset.queryMs = (queriedAt - startedAt).toFixed(1);
       canvas.dataset.buildMs = (labelsBuiltAt - queriedAt).toFixed(1);
       canvas.dataset.layoutMs = (layoutFinishedAt - labelsBuiltAt).toFixed(1);
@@ -269,7 +273,7 @@ export function MapLabelsLayer() {
       if (frame) window.cancelAnimationFrame(frame);
       canvas.remove();
     };
-  }, [map, payload]);
+  }, [map, mode, payload]);
 
   return null;
 }

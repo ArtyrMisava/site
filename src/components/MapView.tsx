@@ -12,7 +12,10 @@ import {
   useMapEvents,
 } from 'react-leaflet';
 import {
+  Check,
+  ChevronDown,
   Fullscreen,
+  Layers3,
   Maximize2,
   Minimize2,
   Minus,
@@ -28,6 +31,11 @@ import {
   loadMapGeography,
   type MapGeographyPayload,
 } from '../mapGeography';
+import {
+  MAP_LAYER_OPTIONS,
+  type MapLayerMode,
+  useMapLayerMode,
+} from '../mapLayers';
 import type { MapViewport } from '../mapWindowSync';
 import { placeIconSource } from '../placeIcons';
 import type {
@@ -249,25 +257,92 @@ function constrainMapToBounds(map: L.Map, fit = false) {
   }
 }
 
-function OfflineMapLayers() {
+function OfflineMapLayers({ mode }: { mode: MapLayerMode }) {
+  const nativeZoom = mode === 'overview'
+    ? { minimum: 0, maximum: 0 }
+    : mode === 'detail'
+      ? { minimum: 1, maximum: 2 }
+      : mode === 'maximum'
+        ? { minimum: 3, maximum: 3 }
+        : { minimum: 0, maximum: 3 };
+
   return (
     <>
       <TileLayer
+        key={mode}
         url="/maps/tiles/{z}/{x}/{y}.webp"
         bounds={MAP_BOUNDS}
         tileSize={512}
-        minNativeZoom={0}
-        maxNativeZoom={3}
+        minNativeZoom={nativeZoom.minimum}
+        maxNativeZoom={nativeZoom.maximum}
         minZoom={-4}
         maxZoom={4}
         noWrap
-        keepBuffer={2}
+        keepBuffer={mode === 'maximum' ? 1 : 2}
         updateWhenZooming
         updateWhenIdle
-        className="offline-map-tiles"
+        className={`offline-map-tiles layer-mode-${mode}`}
       />
-      <MapLabelsLayer />
+      <MapLabelsLayer mode={mode} />
     </>
+  );
+}
+
+function MapLayerControl({
+  mode,
+  onChange,
+}: {
+  mode: MapLayerMode;
+  onChange: (mode: MapLayerMode) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = MAP_LAYER_OPTIONS.find((option) => option.id === mode) ?? MAP_LAYER_OPTIONS[0];
+
+  return (
+    <div
+      className={`map-layer-control leaflet-control ${open ? 'is-open' : ''}`}
+      onMouseDown={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <button
+        className="map-layer-trigger"
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        title="Выбрать детализацию карты"
+      >
+        <Layers3 size={17} />
+        <span><small>Слои карты</small><strong>{selected.label}</strong></span>
+        <ChevronDown size={14} />
+      </button>
+      {open && (
+        <div className="map-layer-menu" role="listbox" aria-label="Уровень детализации карты">
+          <div className="map-layer-menu-title">
+            <strong>Детализация</strong>
+            <span>Не зависит от приближения</span>
+          </div>
+          {MAP_LAYER_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              role="option"
+              aria-selected={mode === option.id}
+              className={mode === option.id ? 'selected' : ''}
+              onClick={() => {
+                onChange(option.id);
+                setOpen(false);
+              }}
+            >
+              <span className="map-layer-option-check">
+                {mode === option.id && <Check size={14} strokeWidth={2.5} />}
+              </span>
+              <span><strong>{option.label}</strong><small>{option.description}</small></span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -732,6 +807,7 @@ export function MapView({
     ? items.find((item): item is VehiclePoint => item.id === routeVehicleId && item.kind === 'vehicle')
     : null;
   const itemLocationNames = useItemLocationNames(items);
+  const [layerMode, setLayerMode] = useMapLayerMode();
 
   return (
     <div className={`map-wrap ${placement ? 'is-placing' : ''} ${routeDraft ? 'is-routing' : ''}`}>
@@ -755,7 +831,7 @@ export function MapView({
         attributionControl={false}
         preferCanvas={false}
       >
-        <OfflineMapLayers />
+        <OfflineMapLayers mode={layerMode} />
         <VehicleRoutes
           items={items}
           focusedId={focusedItem?.id ?? null}
@@ -794,6 +870,7 @@ export function MapView({
           />
         ))}
         <MapControls />
+        <MapLayerControl mode={layerMode} onChange={setLayerMode} />
       </MapContainer>
 
       {routeDraft && (

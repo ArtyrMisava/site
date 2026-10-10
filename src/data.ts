@@ -1,4 +1,5 @@
 import { DEFAULT_PLACE_ICON, normalizePlaceIcon } from './placeIcons';
+import { setPersistentItem } from './siteStorage';
 import type {
   MapItem,
   PersonnelEntry,
@@ -241,12 +242,12 @@ export function loadItems(): MapItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(COORDINATE_VERSION_KEY, String(MAP_COORDINATE_VERSION));
+      setPersistentItem(COORDINATE_VERSION_KEY, String(MAP_COORDINATE_VERSION));
       return seedItems;
     }
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) {
-      localStorage.setItem(COORDINATE_VERSION_KEY, String(MAP_COORDINATE_VERSION));
+      setPersistentItem(COORDINATE_VERSION_KEY, String(MAP_COORDINATE_VERSION));
       return seedItems;
     }
 
@@ -259,8 +260,8 @@ export function loadItems(): MapItem[] {
     const migrated = items.map(migrateLegacyItemCoordinates);
     // Записываем преобразованные данные до версии: даже при аварийной перезагрузке
     // старые координаты не будут ошибочно помечены как уже обновлённые.
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
-    localStorage.setItem(COORDINATE_VERSION_KEY, String(MAP_COORDINATE_VERSION));
+    setPersistentItem(STORAGE_KEY, JSON.stringify(migrated));
+    setPersistentItem(COORDINATE_VERSION_KEY, String(MAP_COORDINATE_VERSION));
     return migrated;
   } catch {
     return seedItems;

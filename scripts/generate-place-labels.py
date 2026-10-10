@@ -26,6 +26,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
+from russian_place_names import russianize_name
+
 WIDTH = 1600
 HEIGHT = 1000
 WEST, SOUTH, EAST, NORTH = 14.0, 38.0, 60.0, 61.0
@@ -482,6 +484,12 @@ def main() -> None:
             skipped_duplicates += 1
             continue
         places.append(candidate)
+
+    for place in places:
+        place["name"] = russianize_name(
+            str(place.get("name") or ""),
+            str(place.get("country") or ""),
+        )
 
     places.sort(key=lambda place: (
         0.0 if bool(place["capital"]) and int(place["population"]) >= 1_000_000

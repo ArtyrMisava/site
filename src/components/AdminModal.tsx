@@ -1,18 +1,28 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import {
+  ArrowLeft,
+  Check,
+  Copy,
   Eye,
   EyeOff,
   KeyRound,
+  LifeBuoy,
   ShieldCheck,
   UserRound,
   X,
 } from 'lucide-react';
 import {
   createAdminAccount,
+  ensureAccountRecovery,
   hasAdminAccount,
+  hasRecoveryCode,
+  recoverAdminAccount,
   SESSION_KEY,
   verifyAdmin,
 } from '../auth';
+import { isFolderStorageAvailable } from '../siteStorage';
+
+type AdminFormMode = 'setup' | 'login' | 'recover';
 
 interface AdminModalProps {
   open: boolean;
@@ -25,21 +35,29 @@ export function AdminModal({
   onClose,
   onAuthenticated,
 }: AdminModalProps) {
-  const [setupMode, setSetupMode] = useState(false);
+  const [mode, setMode] = useState<AdminFormMode>('login');
   const [username, setUsername] = useState('');
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
+  const [recoveryCode, setRecoveryCode] = useState('');
+  const [newRecoveryCode, setNewRecoveryCode] = useState('');
   const [showPin, setShowPin] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [recoveryAvailable, setRecoveryAvailable] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setSetupMode(!hasAdminAccount());
+    setMode(hasAdminAccount() ? 'login' : 'setup');
+    setRecoveryAvailable(hasRecoveryCode());
     setUsername('');
     setPin('');
     setConfirmPin('');
+    setRecoveryCode('');
+    setNewRecoveryCode('');
     setShowPin(false);
+    setCopied(false);
     setError('');
   }, [open]);
 
@@ -54,6 +72,12 @@ export function AdminModal({
 
   if (!open) return null;
 
+  function completeAuthentication(name: string) {
+    sessionStorage.setItem(SESSION_KEY, name);
+    onAuthenticated(name);
+    onClose();
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
@@ -63,36 +87,70 @@ export function AdminModal({
       setError('Введите имя пользователя.');
       return;
     }
+    if (mode === 'recover' && recoveryCode.replace(/[^A-Z0-9]/gi, '').length < 12) {
+      setError('Введите полный код восстановления.');
+      return;
+    }
     if (pin.length < 4) {
       setError('PIN должен содержать не менее 4 символов.');
       return;
     }
-    if (setupMode && pin !== confirmPin) {
+    if (mode !== 'login' && pin !== confirmPin) {
       setError('PIN-коды не совпадают.');
       return;
     }
 
     setSubmitting(true);
     try {
-      if (setupMode) {
-        await createAdminAccount(cleanUsername, pin);
-      } else {
-        const isValid = await verifyAdmin(cleanUsername, pin);
-        if (!isValid) {
-          setError('Неверное имя пользователя или PIN.');
-          return;
-        }
+      if (mode === 'setup') {
+        const code = await createAdminAccount(cleanUsername, pin);
+        setNewRecoveryCode(code);
+        setRecoveryAvailable(true);
+        return;
       }
 
-      sessionStorage.setItem(SESSION_KEY, cleanUsername);
-      onAuthenticated(cleanUsername);
-      onClose();
+      if (mode === 'recover') {
+        const recovered = await recoverAdminAccount(cleanUsername, recoveryCode, pin);
+        if (!recovered) {
+          setError('Неверное имя пользователя или код восстановления.');
+          return;
+        }
+        completeAuthentication(cleanUsername);
+        return;
+      }
+
+      const isValid = await verifyAdmin(cleanUsername, pin);
+      if (!isValid) {
+        setError('Неверное имя пользователя или PIN.');
+        return;
+      }
+      const generatedRecoveryCode = await ensureAccountRecovery(pin);
+      if (generatedRecoveryCode) {
+        setNewRecoveryCode(generatedRecoveryCode);
+        setRecoveryAvailable(true);
+        return;
+      }
+      completeAuthentication(cleanUsername);
     } catch {
       setError('Не удалось сохранить данные доступа. Попробуйте ещё раз.');
     } finally {
       setSubmitting(false);
     }
   }
+
+  async function copyRecoveryCode() {
+    try {
+      await navigator.clipboard.writeText(newRecoveryCode);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  const folderStorage = isFolderStorageAvailable();
+  const setupMode = mode === 'setup';
+  const recoverMode = mode === 'recover';
 
   return (
     <div
@@ -119,89 +177,182 @@ export function AdminModal({
         </button>
 
         <div className="modal-emblem" aria-hidden="true">
-          <ShieldCheck size={27} strokeWidth={1.8} />
+          {recoverMode ? <LifeBuoy size={26} strokeWidth={1.8} /> : <ShieldCheck size={27} strokeWidth={1.8} />}
         </div>
-        <p className="eyebrow">Защищённый режим</p>
-        <h2 id="admin-modal-title">
-          {setupMode ? 'Создайте доступ администратора' : 'Вход администратора'}
-        </h2>
-        <p className="modal-intro">
-          {setupMode
-            ? 'Это первый запуск. Придумайте имя и PIN для управления объектами карты.'
-            : 'После входа можно добавлять, перемещать и удалять точки и машины.'}
-        </p>
 
-        <form onSubmit={handleSubmit} className="admin-form">
-          <label className="field-label" htmlFor="admin-username">
-            Имя пользователя
-          </label>
-          <div className="input-with-icon">
-            <UserRound size={17} aria-hidden="true" />
-            <input
-              id="admin-username"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder="Например, admin"
-              autoComplete="username"
-              autoFocus
-            />
-          </div>
-
-          <label className="field-label" htmlFor="admin-pin">
-            PIN-код
-          </label>
-          <div className="input-with-icon">
-            <KeyRound size={17} aria-hidden="true" />
-            <input
-              id="admin-pin"
-              type={showPin ? 'text' : 'password'}
-              value={pin}
-              onChange={(event) => setPin(event.target.value)}
-              placeholder="Не менее 4 символов"
-              autoComplete={setupMode ? 'new-password' : 'current-password'}
-            />
+        {newRecoveryCode ? (
+          <>
+            <p className="eyebrow">Аварийный доступ</p>
+            <h2 id="admin-modal-title">Сохраните код восстановления</h2>
+            <p className="modal-intro">
+              Код показывается только сейчас. Он позволит задать новый PIN без удаления точек, машин и маршрутов.
+            </p>
+            <div className="recovery-code-box">
+              <code>{newRecoveryCode}</code>
+              <button type="button" onClick={() => void copyRecoveryCode()}>
+                {copied ? <Check size={16} /> : <Copy size={16} />}
+                {copied ? 'Скопировано' : 'Копировать'}
+              </button>
+            </div>
+            <div className="recovery-warning">
+              Храните код отдельно от компьютера. В папке сайта сохраняется только его защищённый хеш.
+            </div>
             <button
+              className="primary-button modal-submit"
               type="button"
-              className="input-action"
-              onClick={() => setShowPin((current) => !current)}
-              aria-label={showPin ? 'Скрыть PIN' : 'Показать PIN'}
+              onClick={() => completeAuthentication(username.trim())}
             >
-              {showPin ? <EyeOff size={17} /> : <Eye size={17} />}
+              Я сохранил код · продолжить
             </button>
-          </div>
+          </>
+        ) : (
+          <>
+            {recoverMode && (
+              <button
+                className="admin-mode-back"
+                type="button"
+                onClick={() => {
+                  setMode('login');
+                  setPin('');
+                  setConfirmPin('');
+                  setRecoveryCode('');
+                  setError('');
+                }}
+              >
+                <ArrowLeft size={14} /> Вернуться ко входу
+              </button>
+            )}
+            <p className="eyebrow">{recoverMode ? 'Восстановление доступа' : 'Защищённый режим'}</p>
+            <h2 id="admin-modal-title">
+              {setupMode
+                ? 'Создайте доступ администратора'
+                : recoverMode
+                  ? 'Задайте новый PIN'
+                  : 'Вход администратора'}
+            </h2>
+            <p className="modal-intro">
+              {setupMode
+                ? 'Это первый запуск. Придумайте имя и PIN для управления объектами карты.'
+                : recoverMode
+                  ? 'Введите сохранённый код восстановления. Все данные карты останутся на месте.'
+                  : 'После входа можно добавлять, перемещать и удалять точки и машины.'}
+            </p>
 
-          {setupMode && (
-            <>
-              <label className="field-label" htmlFor="admin-pin-confirm">
-                Повторите PIN
+            <form onSubmit={handleSubmit} className="admin-form">
+              <label className="field-label" htmlFor="admin-username">
+                Имя пользователя
+              </label>
+              <div className="input-with-icon">
+                <UserRound size={17} aria-hidden="true" />
+                <input
+                  id="admin-username"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  placeholder="Например, admin"
+                  autoComplete="username"
+                  autoFocus
+                />
+              </div>
+
+              {recoverMode && (
+                <>
+                  <label className="field-label" htmlFor="admin-recovery-code">
+                    Код восстановления
+                  </label>
+                  <div className="input-with-icon recovery-code-input">
+                    <LifeBuoy size={17} aria-hidden="true" />
+                    <input
+                      id="admin-recovery-code"
+                      value={recoveryCode}
+                      onChange={(event) => setRecoveryCode(event.target.value.toUpperCase())}
+                      placeholder="XXXX-XXXX-XXXX-XXXX"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </div>
+                </>
+              )}
+
+              <label className="field-label" htmlFor="admin-pin">
+                {recoverMode ? 'Новый PIN-код' : 'PIN-код'}
               </label>
               <div className="input-with-icon">
                 <KeyRound size={17} aria-hidden="true" />
                 <input
-                  id="admin-pin-confirm"
+                  id="admin-pin"
                   type={showPin ? 'text' : 'password'}
-                  value={confirmPin}
-                  onChange={(event) => setConfirmPin(event.target.value)}
-                  placeholder="Введите PIN ещё раз"
-                  autoComplete="new-password"
+                  value={pin}
+                  onChange={(event) => setPin(event.target.value)}
+                  placeholder="Не менее 4 символов"
+                  autoComplete={setupMode || recoverMode ? 'new-password' : 'current-password'}
                 />
+                <button
+                  type="button"
+                  className="input-action"
+                  onClick={() => setShowPin((current) => !current)}
+                  aria-label={showPin ? 'Скрыть PIN' : 'Показать PIN'}
+                >
+                  {showPin ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
               </div>
-            </>
-          )}
 
-          {error && <p className="form-error">{error}</p>}
+              {(setupMode || recoverMode) && (
+                <>
+                  <label className="field-label" htmlFor="admin-pin-confirm">
+                    Повторите PIN
+                  </label>
+                  <div className="input-with-icon">
+                    <KeyRound size={17} aria-hidden="true" />
+                    <input
+                      id="admin-pin-confirm"
+                      type={showPin ? 'text' : 'password'}
+                      value={confirmPin}
+                      onChange={(event) => setConfirmPin(event.target.value)}
+                      placeholder="Введите PIN ещё раз"
+                      autoComplete="new-password"
+                    />
+                  </div>
+                </>
+              )}
 
-          <button className="primary-button modal-submit" type="submit" disabled={submitting}>
-            {submitting
-              ? 'Проверяем…'
-              : setupMode
-                ? 'Создать доступ'
-                : 'Войти в режим управления'}
-          </button>
-        </form>
+              {error && <p className="form-error">{error}</p>}
+
+              <button className="primary-button modal-submit" type="submit" disabled={submitting}>
+                {submitting
+                  ? 'Проверяем…'
+                  : setupMode
+                    ? 'Создать доступ'
+                    : recoverMode
+                      ? 'Восстановить доступ'
+                      : 'Войти в режим управления'}
+              </button>
+            </form>
+
+            {mode === 'login' && recoveryAvailable && (
+              <button
+                className="forgot-pin-button"
+                type="button"
+                onClick={() => {
+                  setMode('recover');
+                  setPin('');
+                  setError('');
+                }}
+              >
+                <LifeBuoy size={14} /> Забыли PIN? Восстановить
+              </button>
+            )}
+            {mode === 'login' && !recoveryAvailable && (
+              <p className="legacy-recovery-note">
+                Для старой учётной записи без кода используйте <strong>RESET_ADMIN_PASSWORD.bat</strong>.
+              </p>
+            )}
+          </>
+        )}
 
         <p className="security-note">
-          Данные доступа и карта хранятся только в этом браузере.
+          {folderStorage
+            ? 'Хеш PIN и данные карты сохраняются в папке site-data рядом с сайтом.'
+            : 'Запустите сайт через DUS Server, чтобы сохранять данные в папке site-data.'}
         </p>
       </section>
     </div>
