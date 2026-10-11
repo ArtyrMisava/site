@@ -3399,17 +3399,25 @@ button:disabled {
 }
 
 .personnel-tooltip-scroll {
-  max-height: 220px;
+  max-height: min(260px, 46vh);
   overflow-y: auto;
   overscroll-behavior: contain;
   touch-action: pan-y;
   border: 1px solid #e7e8e3;
   border-radius: 9px;
-  scrollbar-color: #b9c2bb #f1f3ef;
+  outline: 0;
+  scrollbar-color: #9eaaa1 #f1f3ef;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
 
+.personnel-tooltip-scroll:focus-visible {
+  border-color: #91ab9a;
+  box-shadow: 0 0 0 3px rgba(74, 117, 89, 0.14);
+}
+
 .object-popup .personnel-tooltip-scroll {
+  pointer-events: auto;
   cursor: auto;
 }
 
@@ -3425,7 +3433,7 @@ button:disabled {
 .personnel-tooltip-scroll::-webkit-scrollbar-thumb {
   border: 2px solid #f1f3ef;
   border-radius: 8px;
-  background: #b9c2bb;
+  background: #9eaaa1;
 }
 
 .map-tooltip-card .personnel-tooltip-table {

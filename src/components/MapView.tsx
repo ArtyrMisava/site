@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L, { type LeafletEventHandlerFnMap } from 'leaflet';
 import {
   CircleMarker,
@@ -198,6 +198,14 @@ function ObjectTooltip({
   editable?: boolean;
   onEdit?: () => void;
 }) {
+  const makePersonnelListInteractive = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    // Leaflet normally interprets the wheel/touch gestures as map controls.
+    // Keep every gesture that starts over the personnel list inside the list.
+    L.DomEvent.disableScrollPropagation(node);
+    L.DomEvent.disableClickPropagation(node);
+  }, []);
+
   if (item.kind === 'person') {
     return (
       <div className="map-tooltip-card point-personnel-tooltip">
@@ -208,7 +216,13 @@ function ObjectTooltip({
         <strong className="tooltip-title">{item.pointName}</strong>
         {locationName && <span className="tooltip-location">Рядом: {locationName}</span>}
         {item.personnel.length > 0 ? (
-          <div className="personnel-tooltip-scroll">
+          <div
+            ref={makePersonnelListInteractive}
+            className="personnel-tooltip-scroll"
+            role="region"
+            aria-label={`Список людей точки «${item.pointName}»`}
+            tabIndex={0}
+          >
             <table className="personnel-tooltip-table">
               <thead>
                 <tr><th>ФИО</th><th>Звание / должность</th></tr>
@@ -737,8 +751,14 @@ function MapObject({
     () => ({
       click(event) {
         if (item.kind === 'person') {
+          const marker = event.target as L.Marker;
           L.DomEvent.stopPropagation(event.originalEvent);
-          event.target.closeTooltip();
+          marker.closeTooltip();
+          // Popup also has Leaflet's native click handler. Re-check after all
+          // handlers finish so a point click always leaves the card pinned.
+          window.setTimeout(() => {
+            if (!marker.isPopupOpen()) marker.openPopup();
+          }, 0);
           return;
         }
         if (editable) {
