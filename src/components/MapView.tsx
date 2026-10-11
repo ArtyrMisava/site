@@ -6,6 +6,7 @@ import {
   Marker,
   Pane,
   Polyline,
+  Popup,
   TileLayer,
   Tooltip,
   useMap,
@@ -19,6 +20,7 @@ import {
   Maximize2,
   Minimize2,
   Minus,
+  Pencil,
   Play,
   Plus,
   Route,
@@ -183,7 +185,19 @@ function vehicleStatus(status: VehiclePoint['status']): string {
   return 'На стоянке';
 }
 
-function ObjectTooltip({ item, locationName }: { item: MapItem; locationName: string }) {
+function ObjectTooltip({
+  item,
+  locationName,
+  pinned = false,
+  editable = false,
+  onEdit,
+}: {
+  item: MapItem;
+  locationName: string;
+  pinned?: boolean;
+  editable?: boolean;
+  onEdit?: () => void;
+}) {
   if (item.kind === 'person') {
     return (
       <div className="map-tooltip-card point-personnel-tooltip">
@@ -211,6 +225,26 @@ function ObjectTooltip({ item, locationName }: { item: MapItem; locationName: st
           </div>
         ) : (
           <div className="empty-tooltip-personnel">На этом листе пока нет сотрудников</div>
+        )}
+        {pinned ? (
+          <div className="tooltip-pinned-footer">
+            <span>Карточка закреплена · список можно прокручивать</span>
+            {editable && onEdit && (
+              <button
+                type="button"
+                className="tooltip-edit-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEdit();
+                }}
+              >
+                <Pencil size={14} />
+                Редактировать
+              </button>
+            )}
+          </div>
+        ) : (
+          <span className="tooltip-pin-hint">Нажмите на метку, чтобы закрепить карточку</span>
         )}
       </div>
     );
@@ -693,6 +727,7 @@ function MapObject({
   onEdit: (item: MapItem) => void;
   onMove: (id: string, lat: number, lng: number) => void;
 }) {
+  const markerRef = useRef<L.Marker | null>(null);
   const icon = useMemo(
     () => markerIcon(item, focused, locationName),
     [item, focused, locationName],
@@ -701,13 +736,21 @@ function MapObject({
   const eventHandlers = useMemo<LeafletEventHandlerFnMap>(
     () => ({
       click(event) {
+        if (item.kind === 'person') {
+          L.DomEvent.stopPropagation(event.originalEvent);
+          event.target.closeTooltip();
+          return;
+        }
         if (editable) {
           L.DomEvent.stopPropagation(event.originalEvent);
           onEdit(item);
         }
       },
+      popupopen(event) {
+        event.target.closeTooltip();
+      },
       mouseover(event) {
-        event.target.openTooltip();
+        if (!event.target.isPopupOpen()) event.target.openTooltip();
       },
       mouseout(event) {
         event.target.closeTooltip();
@@ -727,6 +770,7 @@ function MapObject({
 
   return (
     <Marker
+      ref={markerRef}
       position={[item.lat, item.lng]}
       icon={icon}
       draggable={draggable}
@@ -743,6 +787,30 @@ function MapObject({
       >
         <ObjectTooltip item={item} locationName={locationName} />
       </Tooltip>
+      {item.kind === 'person' && (
+        <Popup
+          className="object-popup"
+          offset={[0, -46]}
+          minWidth={260}
+          maxWidth={390}
+          autoPan
+          autoPanPadding={[24, 24]}
+          keepInView
+          closeButton
+          autoClose
+        >
+          <ObjectTooltip
+            item={item}
+            locationName={locationName}
+            pinned
+            editable={editable}
+            onEdit={() => {
+              markerRef.current?.closePopup();
+              onEdit(item);
+            }}
+          />
+        </Popup>
+      )}
     </Marker>
   );
 }

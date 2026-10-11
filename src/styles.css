@@ -1557,6 +1557,70 @@ button:disabled {
   border-top-color: #fff;
 }
 
+.object-popup.leaflet-popup {
+  margin-bottom: 0;
+}
+
+.object-popup .leaflet-popup-content-wrapper {
+  padding: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  color: var(--ink);
+  background: transparent;
+  box-shadow: 0 18px 48px rgba(33, 42, 37, 0.22), 0 2px 8px rgba(33, 42, 37, 0.12);
+}
+
+.object-popup .leaflet-popup-content {
+  width: auto !important;
+  margin: 0;
+  line-height: inherit;
+}
+
+.object-popup .leaflet-popup-tip-container {
+  width: 26px;
+  height: 14px;
+  margin-top: -1px;
+}
+
+.object-popup .leaflet-popup-tip {
+  width: 14px;
+  height: 14px;
+  margin: -8px auto 0;
+  background: #fff;
+  box-shadow: 3px 3px 5px rgba(33, 42, 37, 0.09);
+}
+
+.object-popup a.leaflet-popup-close-button {
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: grid;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  place-items: center;
+  border-radius: 8px;
+  color: #7d8780;
+  background: #f2f3ef;
+  font: 0/0 a;
+  transition: color 130ms ease, background 130ms ease;
+}
+
+.object-popup a.leaflet-popup-close-button::after {
+  content: '×';
+  font: 20px/1 Arial, sans-serif;
+}
+
+.object-popup a.leaflet-popup-close-button:hover,
+.object-popup a.leaflet-popup-close-button:focus-visible {
+  color: #4d5951;
+  background: #e7ebe5;
+}
+
+.object-popup .map-tooltip-card {
+  padding-right: 42px;
+}
+
 .map-tooltip-card {
   width: 264px;
   padding: 14px 15px 13px;
@@ -3337,8 +3401,31 @@ button:disabled {
 .personnel-tooltip-scroll {
   max-height: 220px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   border: 1px solid #e7e8e3;
   border-radius: 9px;
+  scrollbar-color: #b9c2bb #f1f3ef;
+  scrollbar-width: thin;
+}
+
+.object-popup .personnel-tooltip-scroll {
+  cursor: auto;
+}
+
+.personnel-tooltip-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.personnel-tooltip-scroll::-webkit-scrollbar-track {
+  border-radius: 0 8px 8px 0;
+  background: #f1f3ef;
+}
+
+.personnel-tooltip-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid #f1f3ef;
+  border-radius: 8px;
+  background: #b9c2bb;
 }
 
 .map-tooltip-card .personnel-tooltip-table {
@@ -3390,6 +3477,56 @@ button:disabled {
   text-align: center;
   background: #fafaf7;
   font-size: 8.8px;
+}
+
+.tooltip-pin-hint {
+  display: block;
+  margin-top: 9px;
+  color: #89928c;
+  font-size: 8px;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.tooltip-pinned-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  margin-top: 10px;
+}
+
+.tooltip-pinned-footer > span {
+  flex: 1;
+  color: #89928c;
+  font-size: 7.8px;
+  line-height: 1.35;
+}
+
+.tooltip-edit-button {
+  display: inline-flex;
+  min-height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid #cbd8cf;
+  border-radius: 9px;
+  color: #476555;
+  background: #f5f8f5;
+  font: inherit;
+  font-size: 8.5px;
+  font-weight: 720;
+  cursor: pointer;
+  transition: border-color 130ms ease, color 130ms ease, background 130ms ease;
+}
+
+.tooltip-edit-button:hover,
+.tooltip-edit-button:focus-visible {
+  border-color: #9fb7a6;
+  color: #294d3a;
+  background: #eaf2ec;
 }
 
 /* Excel workbook modal */
