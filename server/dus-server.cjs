@@ -262,9 +262,9 @@ function resetAdministrator(statePath) {
   const { state } = readState(statePath);
   delete state.entries['lokus-admin-credentials-v1'];
   writeState(statePath, state);
-  console.log('Administrator access was reset.');
-  console.log('Map points, vehicles, routes and settings were preserved.');
-  console.log('Start DUS and create a new administrator PIN.');
+  console.log('Доступ администратора сброшен.');
+  console.log('Точки, люди, машины, маршруты, линия и настройки сохранены.');
+  console.log('Запустите ДУС и создайте нового администратора с новым ПИН-кодом.');
 }
 
 async function listenOnAvailablePort(server, firstPort) {
@@ -327,11 +327,24 @@ async function main() {
 
   const port = await listenOnAvailablePort(server, firstPort);
   const address = `http://127.0.0.1:${port}/`;
-  console.log('');
-  console.log('============================================================');
-  console.log('                    Д У С');
-  console.log('              ЛОКАЛЬНАЯ КАРТА');
-  console.log('============================================================');
+  if (!flags.has('no-banner')) {
+    console.log('');
+    console.log('       +----------------------------------------------------------+');
+    console.log('');
+    console.log('                   ####      ##    ##     ######');
+    console.log('                  ##  ##     ##    ##    ##');
+    console.log('                  ##  ##      ##  ##     ##');
+    console.log('                  ##  ##       ####      ##');
+    console.log('                  ##  ##        ##       ##');
+    console.log('                ########       ##        ##');
+    console.log('                ##    ##      ##          ######');
+    console.log('');
+    console.log('                             Д У С');
+    console.log('                    ЛОКАЛЬНАЯ КАРТА ОБЪЕКТОВ');
+    console.log('');
+    console.log('       +----------------------------------------------------------+');
+    console.log('');
+  }
   console.log(`Сайт: ${address}`);
   console.log(`Данные: ${statePath}`);
   console.log('Для остановки нажмите Ctrl+C.');

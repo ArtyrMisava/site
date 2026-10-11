@@ -1,32 +1,39 @@
 ﻿param(
     [string]$Root = "",
-    [int]$Port = 4173
+    [int]$Port = 4173,
+    [switch]$NoBanner
 )
 
 $ErrorActionPreference = "Stop"
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 try { $Host.UI.RawUI.WindowTitle = "ДУС - локальная карта" } catch { }
-Clear-Host
 
-$banner = @(
-    "             ДДДДД       У     У        ССССС",
-    "            Д     Д      У     У       С",
-    "            Д     Д      У     У       С",
-    "            Д     Д       У   У        С",
-    "            Д     Д        У У         С",
-    "          ДДДДДДДДД         У           ССССС",
-    "          Д       Д        У"
-)
+if (-not $NoBanner) {
+    Clear-Host
+    $banner = @(
+        "       +----------------------------------------------------------+",
+        "",
+        "                   ####      ##    ##     ######",
+        "                  ##  ##     ##    ##    ##",
+        "                  ##  ##      ##  ##     ##",
+        "                  ##  ##       ####      ##",
+        "                  ##  ##        ##       ##",
+        "                ########       ##        ##",
+        "                ##    ##      ##          ######",
+        "",
+        "                             Д У С",
+        "                    ЛОКАЛЬНАЯ КАРТА ОБЪЕКТОВ",
+        "",
+        "       +----------------------------------------------------------+"
+    )
 
-Write-Host ""
-foreach ($line in $banner) {
-    Write-Host $line -ForegroundColor Cyan
+    Write-Host ""
+    foreach ($line in $banner) {
+        Write-Host $line -ForegroundColor Cyan
+    }
+    Write-Host ""
 }
-Write-Host ""
-Write-Host "                 Л О К А Л Ь Н А Я   К А Р Т А" -ForegroundColor DarkCyan
-Write-Host ("=" * 65) -ForegroundColor DarkCyan
-Write-Host ""
 
 if ([string]::IsNullOrWhiteSpace($Root)) {
     $Root = Join-Path (Split-Path -Parent $PSScriptRoot) "offline-site"
@@ -69,9 +76,9 @@ Write-Host "ДУС запущен: $url" -ForegroundColor Green
 Write-Host "Для остановки нажмите Ctrl+C." -ForegroundColor DarkGray
 Write-Host ""
 
-# Direct Excel file linking requires the File System Access API.
-# Microsoft Edge is present on standard Windows installations; prefer it over
-# the default browser so saving back to the same .xlsx file is available.
+# Для прямой работы с Excel требуется браузерный File System Access API.
+# На обычной Windows уже установлен Microsoft Edge, поэтому сначала используем
+# его: так сайт сможет сохранять изменения обратно в тот же файл .xlsx.
 $browserCandidates = @(
     "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
     "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
@@ -210,7 +217,7 @@ try {
             $stream.Flush()
         }
         catch {
-            Write-Host "Request error: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "Ошибка обработки запроса: $($_.Exception.Message)" -ForegroundColor Yellow
         }
         finally {
             $client.Close()
