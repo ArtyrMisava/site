@@ -1,0 +1,12 @@
+{
+  "icons": [
+    { "id": "pin", "label": "Метка", "file": "pin.svg" },
+    { "id": "office", "label": "Офис", "file": "office.svg" },
+    { "id": "house", "label": "Дом", "file": "house.svg" },
+    { "id": "houses", "label": "Домики", "file": "houses.svg" },
+    { "id": "warehouse", "label": "Склад", "file": "warehouse.svg" },
+    { "id": "checkpoint", "label": "КПП", "file": "checkpoint.svg" },
+    { "id": "satellite", "label": "Спутник", "file": "satellite.svg" },
+    { "id": "headquarters", "label": "Штаб", "file": "headquarters.svg" }
+  ]
+}
