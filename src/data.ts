@@ -33,6 +33,20 @@ export function mapLatitudeToGeographicLatitude(lat: number): number {
   return geographicLatitude(south + (lat / MAP_HEIGHT) * (north - south));
 }
 
+export function geographicCoordinatesToMap(latitude: number, longitude: number): RoutePoint {
+  const south = mercatorY(MAP_GEOGRAPHIC_BOUNDS.south);
+  const north = mercatorY(MAP_GEOGRAPHIC_BOUNDS.north);
+  return {
+    lat: Math.min(MAP_HEIGHT, Math.max(0,
+      ((mercatorY(latitude) - south) / (north - south)) * MAP_HEIGHT,
+    )),
+    lng: Math.min(MAP_WIDTH, Math.max(0,
+      ((longitude - MAP_GEOGRAPHIC_BOUNDS.west)
+        / (MAP_GEOGRAPHIC_BOUNDS.east - MAP_GEOGRAPHIC_BOUNDS.west)) * MAP_WIDTH,
+    )),
+  };
+}
+
 export function migrateLegacyMapCoordinates(lat: number, lng: number): RoutePoint {
   const legacySouth = mercatorY(LEGACY_BOUNDS.south);
   const legacyNorth = mercatorY(LEGACY_BOUNDS.north);

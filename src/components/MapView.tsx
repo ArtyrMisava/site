@@ -23,7 +23,10 @@ import {
   Pencil,
   Play,
   Plus,
+  RotateCcw,
   Route,
+  Save,
+  Trash2,
   Undo2,
   X,
 } from 'lucide-react';
@@ -33,6 +36,12 @@ import {
   loadMapGeography,
   type MapGeographyPayload,
 } from '../mapGeography';
+import {
+  cloneFrontlineSegments,
+  formatFrontlineDate,
+  type FrontlineSnapshot,
+  useFrontlineLayer,
+} from '../frontline';
 import {
   MAP_LAYER_OPTIONS,
   type MapLayerMode,
@@ -52,6 +61,25 @@ const MAP_BOUNDS = L.latLngBounds(
   [0, 0],
   [MAP_HEIGHT, MAP_WIDTH],
 );
+
+const FRONTLINE_VERTEX_ICON = L.divIcon({
+  className: 'frontline-vertex-icon',
+  html: '<span></span>',
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+});
+
+const FRONTLINE_VERTEX_SELECTED_ICON = L.divIcon({
+  className: 'frontline-vertex-icon is-selected',
+  html: '<span></span>',
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
+});
+
+interface FrontlineVertexSelection {
+  segmentIndex: number;
+  pointIndex: number;
+}
 
 interface LocationCacheEntry {
   lat: number;
@@ -339,33 +367,63 @@ function OfflineMapLayers({ mode }: { mode: MapLayerMode }) {
 function MapLayerControl({
   mode,
   onChange,
+  frontline,
+  frontlineVisible,
+  frontlineLoading,
+  frontlineError,
+  isAdmin,
+  canEditFrontline,
+  frontlineEditing,
+  onToggleFrontline,
+  onEditFrontline,
+  onResetFrontline,
 }: {
   mode: MapLayerMode;
   onChange: (mode: MapLayerMode) => void;
+  frontline: FrontlineSnapshot | null;
+  frontlineVisible: boolean;
+  frontlineLoading: boolean;
+  frontlineError: string;
+  isAdmin: boolean;
+  canEditFrontline: boolean;
+  frontlineEditing: boolean;
+  onToggleFrontline: () => void;
+  onEditFrontline: () => void;
+  onResetFrontline: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const selected = MAP_LAYER_OPTIONS.find((option) => option.id === mode) ?? MAP_LAYER_OPTIONS[0];
+  const frontlineStatus = frontlineLoading
+    ? 'Загрузка локальных данных…'
+    : frontline
+      ? `${frontline.custom ? 'Изменена администратором · основа' : 'Снимок'} ${formatFrontlineDate(frontline.dataDate)}`
+      : frontlineError || 'Данные отсутствуют';
 
   return (
     <div
       className={`map-layer-control leaflet-control ${open ? 'is-open' : ''}`}
       onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
     >
       <button
         className="map-layer-trigger"
         type="button"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
-        aria-haspopup="listbox"
-        title="Выбрать детализацию карты"
+        aria-haspopup="dialog"
+        title="Настроить слои карты"
       >
         <Layers3 size={17} />
-        <span><small>Слои карты</small><strong>{selected.label}</strong></span>
+        <span>
+          <small>Слои карты</small>
+          <strong>{selected.label}{frontlineVisible ? ' · ЛБС' : ''}</strong>
+        </span>
         <ChevronDown size={14} />
       </button>
       {open && (
-        <div className="map-layer-menu" role="listbox" aria-label="Уровень детализации карты">
+        <div className="map-layer-menu" role="dialog" aria-label="Слои карты">
           <div className="map-layer-menu-title">
             <strong>Детализация</strong>
             <span>Не зависит от приближения</span>
@@ -374,8 +432,6 @@ function MapLayerControl({
             <button
               key={option.id}
               type="button"
-              role="option"
-              aria-selected={mode === option.id}
               className={mode === option.id ? 'selected' : ''}
               onClick={() => {
                 onChange(option.id);
@@ -388,6 +444,62 @@ function MapLayerControl({
               <span><strong>{option.label}</strong><small>{option.description}</small></span>
             </button>
           ))}
+
+          <div className="frontline-layer-section">
+            <div className="map-layer-menu-title">
+              <strong>Оперативные слои</strong>
+              <span>Отдельное включение</span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={frontlineVisible}
+              className={`frontline-layer-toggle ${frontlineVisible ? 'selected' : ''}`}
+              onClick={onToggleFrontline}
+              disabled={!frontline || frontlineEditing}
+            >
+              <span className="map-layer-option-check">
+                {frontlineVisible && <Check size={14} strokeWidth={2.5} />}
+              </span>
+              <span>
+                <strong>Линия боевого соприкосновения</strong>
+                <small>{frontlineStatus}</small>
+              </span>
+            </button>
+            {frontline && (
+              <p className="frontline-layer-notice">
+                <span>{frontline.notice}</span>
+                <small>Источник: {frontline.sourceName}</small>
+              </p>
+            )}
+            {isAdmin && (
+              <div className="frontline-layer-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onEditFrontline();
+                    setOpen(false);
+                  }}
+                  disabled={!canEditFrontline || !frontline}
+                >
+                  <Pencil size={13} />
+                  {frontlineEditing ? 'Редактируется' : 'Редактировать линию'}
+                </button>
+                {frontline?.custom && (
+                  <button
+                    type="button"
+                    className="frontline-reset-button"
+                    onClick={onResetFrontline}
+                    disabled={frontlineEditing}
+                    title="Удалить ручные изменения и вернуть исходный снимок"
+                  >
+                    <RotateCcw size={13} />
+                    Исходная
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -608,6 +720,235 @@ function MapControls() {
 
 function routePositions(route: RoutePoint[]): Array<[number, number]> {
   return route.map((point) => [point.lat, point.lng]);
+}
+
+function FrontlineLayer({
+  segments,
+  visible,
+  editing,
+  activeSegmentIndex,
+  selectedVertex,
+  onSelectSegment,
+  onSelectVertex,
+  onMoveVertex,
+}: {
+  segments: RoutePoint[][];
+  visible: boolean;
+  editing: boolean;
+  activeSegmentIndex: number;
+  selectedVertex: FrontlineVertexSelection | null;
+  onSelectSegment: (index: number) => void;
+  onSelectVertex: (selection: FrontlineVertexSelection) => void;
+  onMoveVertex: (selection: FrontlineVertexSelection, point: RoutePoint) => void;
+}) {
+  if (!visible) return null;
+
+  return (
+    <>
+      <Pane name="frontline" style={{ zIndex: 420, pointerEvents: 'none' }}>
+        {segments.map((segment, segmentIndex) => (
+          segment.length >= 2 && (
+            <Polyline
+              key={`frontline-outline-${segmentIndex}`}
+              positions={routePositions(segment)}
+              interactive={false}
+              pathOptions={{
+                color: '#ffffff',
+                weight: editing && segmentIndex === activeSegmentIndex ? 9 : 8,
+                opacity: 0.9,
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+            />
+          )
+        ))}
+        {segments.map((segment, segmentIndex) => (
+          segment.length >= 2 && (
+            <Polyline
+              key={`frontline-${segmentIndex}`}
+              positions={routePositions(segment)}
+              interactive={editing}
+              eventHandlers={editing ? {
+                click(event) {
+                  L.DomEvent.stopPropagation(event.originalEvent);
+                  onSelectSegment(segmentIndex);
+                },
+              } : undefined}
+              pathOptions={{
+                color: segmentIndex === activeSegmentIndex && editing ? '#b41f2d' : '#cf3441',
+                weight: segmentIndex === activeSegmentIndex && editing ? 6 : 5,
+                opacity: 0.96,
+                dashArray: editing && segmentIndex === activeSegmentIndex ? undefined : '13 8',
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+            />
+          )
+        ))}
+      </Pane>
+      {editing && (
+        <Pane name="frontline-editor" style={{ zIndex: 640 }}>
+          {(segments[activeSegmentIndex] ?? []).map((point, pointIndex) => {
+            const selection = { segmentIndex: activeSegmentIndex, pointIndex };
+            const selected = selectedVertex?.segmentIndex === activeSegmentIndex
+              && selectedVertex.pointIndex === pointIndex;
+            return (
+              <Marker
+                key={`frontline-node-${activeSegmentIndex}-${pointIndex}`}
+                position={[point.lat, point.lng]}
+                icon={selected ? FRONTLINE_VERTEX_SELECTED_ICON : FRONTLINE_VERTEX_ICON}
+                draggable
+                riseOnHover
+                zIndexOffset={160}
+                eventHandlers={{
+                  click(event) {
+                    L.DomEvent.stopPropagation(event.originalEvent);
+                    onSelectVertex(selection);
+                  },
+                  dragstart() {
+                    onSelectVertex(selection);
+                  },
+                  dragend(event) {
+                    const position = (event.target as L.Marker).getLatLng();
+                    onMoveVertex(selection, {
+                      lat: Math.min(MAP_HEIGHT, Math.max(0, position.lat)),
+                      lng: Math.min(MAP_WIDTH, Math.max(0, position.lng)),
+                    });
+                  },
+                }}
+              />
+            );
+          })}
+        </Pane>
+      )}
+    </>
+  );
+}
+
+function FrontlineMapClickHandler({
+  enabled,
+  onClick,
+}: {
+  enabled: boolean;
+  onClick: (point: RoutePoint) => void;
+}) {
+  useMapEvents({
+    click(event) {
+      if (!enabled) return;
+      onClick({
+        lat: Math.min(MAP_HEIGHT, Math.max(0, event.latlng.lat)),
+        lng: Math.min(MAP_WIDTH, Math.max(0, event.latlng.lng)),
+      });
+    },
+  });
+  return null;
+}
+
+function frontlineInsertionIndex(segment: RoutePoint[], point: RoutePoint): number {
+  if (segment.length < 2) return segment.length;
+  let nearestIndex = 1;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < segment.length - 1; index += 1) {
+    const start = segment[index];
+    const end = segment[index + 1];
+    const horizontal = end.lng - start.lng;
+    const vertical = end.lat - start.lat;
+    const lengthSquared = horizontal * horizontal + vertical * vertical;
+    const factor = lengthSquared === 0
+      ? 0
+      : Math.max(0, Math.min(1,
+        ((point.lng - start.lng) * horizontal + (point.lat - start.lat) * vertical) / lengthSquared,
+      ));
+    const projectedLng = start.lng + factor * horizontal;
+    const projectedLat = start.lat + factor * vertical;
+    const distance = (point.lng - projectedLng) ** 2 + (point.lat - projectedLat) ** 2;
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index + 1;
+    }
+  }
+  return nearestIndex;
+}
+
+function FrontlineEditorPanel({
+  segmentCount,
+  activeSegmentIndex,
+  activePointCount,
+  selectedVertex,
+  addPointMode,
+  canSave,
+  onSelectSegment,
+  onToggleAddPoint,
+  onNewSegment,
+  onDeleteVertex,
+  onDeleteSegment,
+  onCancel,
+  onSave,
+}: {
+  segmentCount: number;
+  activeSegmentIndex: number;
+  activePointCount: number;
+  selectedVertex: FrontlineVertexSelection | null;
+  addPointMode: boolean;
+  canSave: boolean;
+  onSelectSegment: (index: number) => void;
+  onToggleAddPoint: () => void;
+  onNewSegment: () => void;
+  onDeleteVertex: () => void;
+  onDeleteSegment: () => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="frontline-editor-panel" role="dialog" aria-label="Редактирование линии боевого соприкосновения">
+      <div className="frontline-editor-heading">
+        <Route size={19} />
+        <span>
+          <strong>Редактирование линии</strong>
+          <small>
+            Перетаскивайте узлы. Режим добавления вставляет новый узел в ближайший отрезок.
+          </small>
+        </span>
+      </div>
+      <label className="frontline-segment-select">
+        <span>Участок</span>
+        <select
+          value={activeSegmentIndex}
+          onChange={(event) => onSelectSegment(Number(event.target.value))}
+        >
+          {Array.from({ length: segmentCount }, (_, index) => (
+            <option key={index} value={index}>№ {index + 1} · {index === activeSegmentIndex ? `${activePointCount} узлов` : 'выбрать'}</option>
+          ))}
+        </select>
+      </label>
+      <div className="frontline-editor-actions">
+        <button
+          type="button"
+          className={addPointMode ? 'is-active' : ''}
+          onClick={onToggleAddPoint}
+          title="После включения нажмите в нужном месте карты"
+        >
+          <Plus size={15} />
+          {addPointMode ? 'Нажмите на карту' : 'Добавить узел'}
+        </button>
+        <button type="button" onClick={onNewSegment}>
+          <Route size={15} /> Новый участок
+        </button>
+        <button type="button" onClick={onDeleteVertex} disabled={!selectedVertex}>
+          <Trash2 size={15} /> Узел
+        </button>
+        <button type="button" onClick={onDeleteSegment} disabled={segmentCount <= 1}>
+          <Trash2 size={15} /> Участок
+        </button>
+        <button type="button" className="frontline-cancel" onClick={onCancel}>
+          <X size={15} /> Отмена
+        </button>
+        <button type="button" className="frontline-save" onClick={onSave} disabled={!canSave}>
+          <Save size={15} /> Сохранить
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function VehicleRoutes({
@@ -896,9 +1237,106 @@ export function MapView({
     : null;
   const itemLocationNames = useItemLocationNames(items);
   const [layerMode, setLayerMode] = useMapLayerMode();
+  const frontline = useFrontlineLayer();
+  const [frontlineEditing, setFrontlineEditing] = useState(false);
+  const [frontlineDraft, setFrontlineDraft] = useState<RoutePoint[][]>([]);
+  const [activeFrontlineSegment, setActiveFrontlineSegment] = useState(0);
+  const [selectedFrontlineVertex, setSelectedFrontlineVertex] = useState<FrontlineVertexSelection | null>(null);
+  const [frontlineAddPointMode, setFrontlineAddPointMode] = useState(false);
+  const canEditFrontline = isAdmin && placement === null && routeDraft === null;
+  const displayedFrontline = frontlineEditing
+    ? frontlineDraft
+    : frontline.snapshot?.segments ?? [];
+
+  const cancelFrontlineEditing = useCallback(() => {
+    setFrontlineEditing(false);
+    setFrontlineDraft([]);
+    setSelectedFrontlineVertex(null);
+    setFrontlineAddPointMode(false);
+  }, []);
+
+  useEffect(() => {
+    if (frontlineEditing && !canEditFrontline) cancelFrontlineEditing();
+  }, [canEditFrontline, cancelFrontlineEditing, frontlineEditing]);
+
+  function startFrontlineEditing() {
+    if (!canEditFrontline || !frontline.snapshot) return;
+    setFrontlineDraft(cloneFrontlineSegments(frontline.snapshot.segments));
+    setActiveFrontlineSegment(0);
+    setSelectedFrontlineVertex(null);
+    setFrontlineAddPointMode(false);
+    setFrontlineEditing(true);
+    frontline.setVisible(true);
+  }
+
+  function selectFrontlineSegment(index: number) {
+    setActiveFrontlineSegment(Math.min(Math.max(0, index), Math.max(0, frontlineDraft.length - 1)));
+    setSelectedFrontlineVertex(null);
+  }
+
+  function moveFrontlineVertex(selection: FrontlineVertexSelection, point: RoutePoint) {
+    setFrontlineDraft((current) => current.map((segment, segmentIndex) => (
+      segmentIndex === selection.segmentIndex
+        ? segment.map((entry, pointIndex) => (pointIndex === selection.pointIndex ? point : entry))
+        : segment
+    )));
+    setSelectedFrontlineVertex(selection);
+  }
+
+  function handleFrontlineMapClick(point: RoutePoint) {
+    if (!frontlineAddPointMode) {
+      setSelectedFrontlineVertex(null);
+      return;
+    }
+    const segment = frontlineDraft[activeFrontlineSegment] ?? [];
+    const pointIndex = frontlineInsertionIndex(segment, point);
+    setFrontlineDraft((current) => {
+      const next = current.map((entry) => [...entry]);
+      if (!next[activeFrontlineSegment]) next[activeFrontlineSegment] = [];
+      next[activeFrontlineSegment].splice(pointIndex, 0, point);
+      return next;
+    });
+    setSelectedFrontlineVertex({ segmentIndex: activeFrontlineSegment, pointIndex });
+  }
+
+  function addFrontlineSegment() {
+    setActiveFrontlineSegment(frontlineDraft.length);
+    setFrontlineDraft((current) => [...current, []]);
+    setSelectedFrontlineVertex(null);
+    setFrontlineAddPointMode(true);
+  }
+
+  function deleteSelectedFrontlineVertex() {
+    if (!selectedFrontlineVertex) return;
+    setFrontlineDraft((current) => current.map((segment, segmentIndex) => (
+      segmentIndex === selectedFrontlineVertex.segmentIndex
+        ? segment.filter((_, pointIndex) => pointIndex !== selectedFrontlineVertex.pointIndex)
+        : segment
+    )));
+    setSelectedFrontlineVertex(null);
+  }
+
+  function deleteActiveFrontlineSegment() {
+    if (frontlineDraft.length <= 1) return;
+    setFrontlineDraft((current) => current.filter((_, index) => index !== activeFrontlineSegment));
+    setActiveFrontlineSegment((current) => Math.max(0, Math.min(current, frontlineDraft.length - 2)));
+    setSelectedFrontlineVertex(null);
+  }
+
+  function saveFrontlineEditing() {
+    const prepared = frontlineDraft.filter((segment) => segment.length >= 2);
+    if (prepared.length === 0) return;
+    frontline.saveCustom(prepared);
+    cancelFrontlineEditing();
+  }
+
+  function resetFrontline() {
+    if (!window.confirm('Удалить ручные изменения и вернуть исходную линию из комплекта сайта?')) return;
+    frontline.resetCustom();
+  }
 
   return (
-    <div className={`map-wrap ${placement ? 'is-placing' : ''} ${routeDraft ? 'is-routing' : ''}`}>
+    <div className={`map-wrap ${placement ? 'is-placing' : ''} ${routeDraft ? 'is-routing' : ''} ${frontlineEditing ? 'is-editing-frontline' : ''}`}>
       <MapContainer
         className="company-map"
         crs={L.CRS.Simple}
@@ -920,6 +1358,19 @@ export function MapView({
         preferCanvas={false}
       >
         <OfflineMapLayers mode={layerMode} />
+        <FrontlineLayer
+          segments={displayedFrontline}
+          visible={frontline.visible || frontlineEditing}
+          editing={frontlineEditing}
+          activeSegmentIndex={activeFrontlineSegment}
+          selectedVertex={selectedFrontlineVertex}
+          onSelectSegment={selectFrontlineSegment}
+          onSelectVertex={(selection) => {
+            setActiveFrontlineSegment(selection.segmentIndex);
+            setSelectedFrontlineVertex(selection);
+          }}
+          onMoveVertex={moveFrontlineVertex}
+        />
         <VehicleRoutes
           items={items}
           focusedId={focusedItem?.id ?? null}
@@ -933,6 +1384,7 @@ export function MapView({
           onViewportChange={onViewportChange}
         />
         <PlacementHandler enabled={placement !== null || routeDraft !== null} onPlace={onPlace} />
+        <FrontlineMapClickHandler enabled={frontlineEditing} onClick={handleFrontlineMapClick} />
         {items.map((item) => (
           <MapObject
             key={item.id}
@@ -943,23 +1395,56 @@ export function MapView({
               isAdmin
               && placement === null
               && routeDraft === null
+              && !frontlineEditing
               && (item.kind === 'vehicle' || excelConnected)
             }
             draggable={
               isAdmin
               && placement === null
               && routeDraft === null
+              && !frontlineEditing
               && (item.kind === 'vehicle' || excelConnected)
               && !(item.kind === 'vehicle' && item.status === 'moving' && item.route.length > 1)
             }
-            mapClickMode={placement !== null || routeDraft !== null}
+            mapClickMode={placement !== null || routeDraft !== null || frontlineEditing}
             onEdit={onEdit}
             onMove={onMove}
           />
         ))}
         <MapControls />
-        <MapLayerControl mode={layerMode} onChange={setLayerMode} />
+        <MapLayerControl
+          mode={layerMode}
+          onChange={setLayerMode}
+          frontline={frontline.snapshot}
+          frontlineVisible={frontline.visible}
+          frontlineLoading={frontline.loading}
+          frontlineError={frontline.error}
+          isAdmin={isAdmin}
+          canEditFrontline={canEditFrontline && !frontlineEditing}
+          frontlineEditing={frontlineEditing}
+          onToggleFrontline={() => frontline.setVisible(!frontline.visible)}
+          onEditFrontline={startFrontlineEditing}
+          onResetFrontline={resetFrontline}
+        />
       </MapContainer>
+
+      {frontlineEditing && (
+        <FrontlineEditorPanel
+          segmentCount={frontlineDraft.length}
+          activeSegmentIndex={activeFrontlineSegment}
+          activePointCount={frontlineDraft[activeFrontlineSegment]?.length ?? 0}
+          selectedVertex={selectedFrontlineVertex}
+          addPointMode={frontlineAddPointMode}
+          canSave={frontlineDraft.some((segment) => segment.length >= 2)}
+          onSelectSegment={selectFrontlineSegment}
+          onToggleAddPoint={() => setFrontlineAddPointMode((current) => !current)}
+          onNewSegment={addFrontlineSegment}
+          onDeleteVertex={deleteSelectedFrontlineVertex}
+          onDeleteSegment={deleteActiveFrontlineSegment}
+          onCancel={cancelFrontlineEditing}
+          onSave={saveFrontlineEditing}
+        />
+      )}
 
       {routeDraft && (
         <RouteBuilderPanel
@@ -973,6 +1458,11 @@ export function MapView({
       <div className="map-legend" aria-label="Условные обозначения">
         <span><i className="legend-dot person" /> Точка</span>
         <span><i className="legend-dot vehicle" /> Машина</span>
+        {(frontline.visible || frontlineEditing) && (
+          <span title={frontline.snapshot?.notice}>
+            <i className="legend-line frontline" /> ЛБС · {formatFrontlineDate(frontline.snapshot?.dataDate ?? '')}
+          </span>
+        )}
       </div>
     </div>
   );

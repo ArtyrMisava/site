@@ -15,6 +15,7 @@ const ALLOWED_STORAGE_KEYS = new Set([
   'dus-map-coordinate-version',
   'dus-map-view-link-v1',
   'dus-map-layer-mode-v1',
+  'dus-frontline-layer-v1',
 ]);
 
 function commandLine() {
