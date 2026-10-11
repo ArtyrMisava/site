@@ -31,6 +31,49 @@ def _override_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", _plain(value)).strip()
 
 
+# Natural Earth uses English country names while GeoNames uses ISO codes.
+# Normalising both forms here guarantees that the same Russian corrections are
+# applied to overview cities and to the denser settlement catalogue.
+COUNTRY_CODE_ALIASES = {
+    "ALAND": "AX",
+    "ALBANIA": "AL",
+    "ARMENIA": "AM",
+    "AUSTRIA": "AT",
+    "AZERBAIJAN": "AZ",
+    "BELARUS": "BY",
+    "BOSNIA AND HERZEGOVINA": "BA",
+    "BULGARIA": "BG",
+    "CROATIA": "HR",
+    "CZECHIA": "CZ",
+    "ESTONIA": "EE",
+    "FINLAND": "FI",
+    "GEORGIA": "GE",
+    "GERMANY": "DE",
+    "GREECE": "GR",
+    "HUNGARY": "HU",
+    "IRAN": "IR",
+    "ITALY": "IT",
+    "KAZAKHSTAN": "KZ",
+    "KOSOVO": "XK",
+    "LATVIA": "LV",
+    "LITHUANIA": "LT",
+    "MOLDOVA": "MD",
+    "MONTENEGRO": "ME",
+    "NORTH MACEDONIA": "MK",
+    "POLAND": "PL",
+    "ROMANIA": "RO",
+    "RUSSIA": "RU",
+    "SERBIA": "RS",
+    "SLOVAKIA": "SK",
+    "SLOVENIA": "SI",
+    "SWEDEN": "SE",
+    "TURKEY": "TR",
+    "TURKMENISTAN": "TM",
+    "UKRAINE": "UA",
+    "UZBEKISTAN": "UZ",
+}
+
+
 # Conventional Russian forms for prominent labels and names visible in the
 # Moldova / Ukraine / Romania working area. Keys are accent-insensitive.
 EXACT_NAMES: dict[tuple[str, str], str] = {
@@ -129,11 +172,81 @@ EXACT_NAMES: dict[tuple[str, str], str] = {
     ("ME", "herceg novi"): "Херцег-Нови",
 }
 
+# Fixes for local Cyrillic spellings which use Russian letters but are not the
+# established Russian form. These are applied after language-specific names
+# have been selected, so labels such as «Унгень» cannot slip through merely
+# because they already happen to be written in Cyrillic.
 CYRILLIC_EXACT_NAMES: dict[tuple[str, str], str] = {
+    ("MD", "Рибниця"): "Рыбница",
+    ("MD", "Унгень"): "Унгены",
+    ("MD", "Сорока"): "Сороки",
+    ("MD", "Орхей"): "Оргеев",
+    ("MD", "Единец"): "Единцы",
+    ("MD", "Сынжерея"): "Сынжерей",
+    ("MD", "Леово"): "Леова",
+    ("MD", "Бричень"): "Бричаны",
+    ("RO", "Барлад"): "Бырлад",
+    ("RO", "Рамнику Сарат"): "Рымнику-Сэрат",
+    ("RO", "Одорхею Секуйеск"): "Одорхею-Секуеск",
+    ("RO", "Куртеа де Арджеш"): "Куртя-де-Арджеш",
+    ("RO", "Фагараш"): "Фэгэраш",
+    ("RO", "Фалтичени"): "Фэлтичени",
+    ("RO", "Гуси"): "Хуши",
+    ("RO", "Текучи"): "Текуч",
+    ("RO", "Карансебеше"): "Карансебеш",
+    ("RO", "Кимпия-Турзий"): "Кымпия-Турзий",
+    ("RO", "Радауци"): "Рэдэуци",
+    ("RO", "Търгу Секуйеск"): "Тыргу-Секуеск",
+    ("RO", "Къмпулунг Молдовенеск"): "Кымпулунг-Молдовенеск",
+    ("RO", "Ръшнов"): "Рышнов",
+    ("RO", "Баиа Сприе"): "Бая-Сприе",
+    ("RO", "Ватра Дорней"): "Ватра-Дорней",
+    ("RO", "Шимлеу Силваниеи"): "Шимлеу-Силванией",
+    ("RO", "Турну Магуреле"): "Турну-Мэгуреле",
+    ("RO", "Блай"): "Блаж",
+    ("RO", "Георгень"): "Георгени",
+    ("BY", "Мазыр"): "Мозырь",
+    ("BY", "Наваполацк"): "Новополоцк",
+    ("BY", "Салигорск"): "Солигорск",
+    ("BY", "Светлагорск"): "Светлогорск",
+    ("BY", "Жодзина"): "Жодино",
+    ("BY", "Кобрын"): "Кобрин",
+    ("BY", "Смаргонь"): "Сморгонь",
+    ("BY", "Рагачов"): "Рогачёв",
+    ("BY", "Бяроза"): "Берёза",
+    ("BY", "Паставы"): "Поставы",
+    ("BY", "Бихав"): "Быхов",
+    ("BY", "Климавичи"): "Климовичи",
+    ("BY", "Ашмяны"): "Ошмяны",
+    ("BY", "Ганцавичи"): "Ганцевичи",
+    ("BY", "Житкавичи"): "Житковичи",
+    ("BY", "Астравец"): "Островец",
+    ("BY", "Белаазёрск"): "Белоозёрск",
+    ("BY", "Капыль"): "Копыль",
+    ("BY", "Лагойск"): "Логойск",
+    ("BY", "Чавусы"): "Чаусы",
+    ("UA", "Бердичив"): "Бердичев",
+    ("UA", "Шахтарск"): "Шахтёрск",
+    ("UA", "Коломия"): "Коломыя",
+    ("UA", "Лубни"): "Лубны",
+    ("UA", "Свитловодск"): "Светловодск",
+    ("UA", "Могилёв-Подолский"): "Могилёв-Подольский",
+    ("UA", "Старобелск"): "Старобельск",
+    ("UA", "Белагорск"): "Белогорск",
+    ("UA", "Лутугине"): "Лутугино",
+    ("UA", "Нетишин"): "Нетешин",
+    ("UA", "Великодолинске"): "Великодолинское",
+    ("UA", "Нова Водолага"): "Новая Водолага",
+    ("UA", "Високий"): "Высокий",
+    ("UA", "Тэпладар"): "Теплодар",
+    ("UA", "Моспине"): "Моспино",
+    ("UA", "Бащанка"): "Баштанка",
     ("PL", "Новий Тарг"): "Новы-Тарг",
     ("PL", "Новий Сонч"): "Новы-Сонч",
     ("PL", "Новий Томишль"): "Новы-Томысль",
     ("PL", "Новий Став"): "Новы-Став",
+    ("BG", "Трговиште"): "Тырговиште",
+    ("BG", "Първомай"): "Первомай",
     ("ME", "Херцег-Новий"): "Херцег-Нови",
     ("HR", "Старий Град"): "Стари-Град",
 }
@@ -355,13 +468,18 @@ def russianize_name(name: str, country: str = "") -> str:
     if not value:
         return value
 
-    country = country.upper()
+    country_value = country.strip().upper()
+    country = COUNTRY_CODE_ALIASES.get(country_value, country_value)
     override = EXACT_NAMES.get((country, _override_key(value)))
     if override:
         return override
 
     value = value.translate(CYRILLIC_NORMALIZATION)
     value = CYRILLIC_EXACT_NAMES.get((country, value), value)
+    if country in {"RO", "BG"}:
+        # Romanian â/î and Bulgarian ъ are often copied into Cyrillic labels as
+        # a hard sign. Russian cartographic transcription uses «ы» instead.
+        value = value.replace("Ъ", "Ы").replace("ъ", "ы")
     if country == "UA":
         value = WORD_RE.sub(_replace_ua_word, value)
 
