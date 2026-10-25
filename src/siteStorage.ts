@@ -46,7 +46,7 @@ async function writeFolderState(keepalive = false): Promise<void> {
     });
     if (!response.ok) throw new Error(`Storage write failed: ${response.status}`);
   } catch (error) {
-    console.error('Не удалось сохранить данные ДУС в папке сайта.', error);
+    console.error('Не удалось сохранить данные в папке ДУС.', error);
   } finally {
     persistenceInFlight = false;
     if (persistenceQueued) {

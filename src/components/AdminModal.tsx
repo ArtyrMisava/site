@@ -195,7 +195,7 @@ export function AdminModal({
               </button>
             </div>
             <div className="recovery-warning">
-              Храните код отдельно от компьютера. В папке сайта сохраняется только его защищённый хеш.
+              Храните код отдельно от компьютера. В папке ДУС сохраняется только его защищённый хеш.
             </div>
             <button
               className="primary-button modal-submit"
@@ -351,8 +351,8 @@ export function AdminModal({
 
         <p className="security-note">
           {folderStorage
-            ? 'Хеш PIN и данные карты сохраняются в папке site-data рядом с сайтом.'
-            : 'Запустите сайт через DUS Server, чтобы сохранять данные в папке site-data.'}
+            ? 'Хеш ПИН-кода и данные карты сохраняются в папке site-data рядом с ДУС.'
+            : 'Запустите ДУС через приложение или локальный сервер, чтобы сохранять данные в папке site-data.'}
         </p>
       </section>
     </div>

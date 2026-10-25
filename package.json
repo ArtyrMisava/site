@@ -1,13 +1,22 @@
 {
   "name": "dus-local-map",
+  "productName": "ДУС",
+  "version": "0.2.0",
+  "description": "Полностью локальная карта объектов ДУС для Windows",
+  "author": "ДУС",
   "private": true,
-  "version": "0.1.0",
   "type": "module",
+  "main": "desktop/main.cjs",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.cjs",
+    "desktop:check": "node --check desktop/main.cjs && node --check desktop/preload.cjs && node --check server/dus-server.cjs && npm run check && npm test",
+    "desktop:dev": "npm run build && electron .",
+    "desktop:pack:dir": "npm run build && electron-builder --dir",
+    "desktop:pack:win": "npm run build && electron-builder --win portable --x64"
   },
   "dependencies": {
     "exceljs": "4.4.0",
@@ -22,12 +31,58 @@
     "@types/react": "18.3.18",
     "@types/react-dom": "18.3.5",
     "@vitejs/plugin-react": "4.3.4",
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0",
     "typescript": "5.7.2",
-    "vite": "6.4.3"
+    "vite": "6.4.5"
   },
   "overrides": {
     "exceljs": {
       "uuid": "11.1.1"
+    }
+  },
+  "build": {
+    "appId": "ru.dus.offlinemap",
+    "productName": "ДУС",
+    "copyright": "ДУС",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "build/desktop"
+    },
+    "files": [
+      "desktop/**/*",
+      "server/dus-server.cjs",
+      "site-data/README_RU.txt",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "dist",
+        "to": "offline-site",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "desktop/assets/icon.ico",
+      "artifactName": "DUS-${version}-portable.${ext}",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "linux": {
+      "target": "dir",
+      "icon": "desktop/assets/icon.png",
+      "category": "Office"
     }
   }
 }

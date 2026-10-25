@@ -627,7 +627,7 @@ function MainApp() {
       'popup=yes,width=1280,height=800,resizable=yes,scrollbars=no',
     );
     if (!openedWindow) {
-      setToast('Браузер заблокировал отдельное окно карты. Разрешите всплывающие окна для этого сайта.');
+      setToast('Не удалось открыть отдельное окно карты. Проверьте разрешение на открытие дополнительных окон.');
       return;
     }
     detachedWindowRef.current = openedWindow;
