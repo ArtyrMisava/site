@@ -6,7 +6,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { URL } = require('node:url');
 
-const SERVER_VERSION = '1.0.0';
+const SERVER_VERSION = '1.1.0';
 const DEFAULT_PORT = 4173;
 const MAX_STATE_SIZE = 32 * 1024 * 1024;
 const ALLOWED_STORAGE_KEYS = new Set([
@@ -267,28 +267,93 @@ function resetAdministrator(statePath) {
   console.log('Запустите ДУС и создайте нового администратора с новым ПИН-кодом.');
 }
 
+function listen(server, port) {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.off('listening', onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, '127.0.0.1');
+  });
+}
+
 async function listenOnAvailablePort(server, firstPort) {
-  for (let port = firstPort; port < firstPort + 10; port += 1) {
+  if (!Number.isInteger(firstPort) || firstPort < 0 || firstPort > 65535) {
+    throw new Error(`Некорректный порт: ${firstPort}`);
+  }
+
+  if (firstPort === 0) {
+    await listen(server, 0);
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Не удалось определить порт сервера');
+    return address.port;
+  }
+
+  for (let port = firstPort; port < Math.min(firstPort + 10, 65536); port += 1) {
     try {
-      await new Promise((resolve, reject) => {
-        const onError = (error) => {
-          server.off('listening', onListening);
-          reject(error);
-        };
-        const onListening = () => {
-          server.off('error', onError);
-          resolve();
-        };
-        server.once('error', onError);
-        server.once('listening', onListening);
-        server.listen(port, '127.0.0.1');
-      });
+      await listen(server, port);
       return port;
     } catch (error) {
       if (error.code !== 'EADDRINUSE' && error.code !== 'EACCES') throw error;
     }
   }
-  throw new Error(`Порты ${firstPort}-${firstPort + 9} заняты`);
+  throw new Error(`Порты ${firstPort}-${Math.min(firstPort + 9, 65535)} заняты`);
+}
+
+function createHttpServer(root, statePath) {
+  const server = http.createServer((request, response) => {
+    const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+    if (pathname === '/api/dus-storage') {
+      void storageRequest(request, response, statePath);
+    } else if (pathname === '/api/health') {
+      sendJson(response, 200, { status: 'ok', version: SERVER_VERSION });
+    } else {
+      staticRequest(request, response, root);
+    }
+  });
+  server.keepAliveTimeout = 30_000;
+  server.headersTimeout = 35_000;
+  server.requestTimeout = 35_000;
+  return server;
+}
+
+async function startDusServer({ root, statePath, firstPort = DEFAULT_PORT }) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedStatePath = path.resolve(statePath);
+  if (!fs.existsSync(path.join(resolvedRoot, 'index.html'))) {
+    throw new Error(`Файлы сайта не найдены: ${resolvedRoot}`);
+  }
+
+  const server = createHttpServer(resolvedRoot, resolvedStatePath);
+  const port = await listenOnAvailablePort(server, firstPort);
+  const address = `http://127.0.0.1:${port}/`;
+  let closing;
+
+  return {
+    server,
+    port,
+    address,
+    root: resolvedRoot,
+    statePath: resolvedStatePath,
+    close() {
+      if (closing) return closing;
+      if (!server.listening) return Promise.resolve();
+      closing = new Promise((resolve, reject) => {
+        server.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+        server.closeIdleConnections?.();
+      });
+      return closing;
+    },
+  };
 }
 
 async function main() {
@@ -307,26 +372,9 @@ async function main() {
     resetAdministrator(statePath);
     return;
   }
-  if (!fs.existsSync(path.join(root, 'index.html'))) {
-    throw new Error(`Файлы сайта не найдены: ${root}`);
-  }
 
-  const server = http.createServer((request, response) => {
-    const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
-    if (pathname === '/api/dus-storage') {
-      void storageRequest(request, response, statePath);
-    } else if (pathname === '/api/health') {
-      sendJson(response, 200, { status: 'ok', version: SERVER_VERSION });
-    } else {
-      staticRequest(request, response, root);
-    }
-  });
-  server.keepAliveTimeout = 30_000;
-  server.headersTimeout = 35_000;
-  server.requestTimeout = 35_000;
-
-  const port = await listenOnAvailablePort(server, firstPort);
-  const address = `http://127.0.0.1:${port}/`;
+  const runningServer = await startDusServer({ root, statePath, firstPort });
+  const { address } = runningServer;
   if (!flags.has('no-banner')) {
     console.log('');
     console.log('       +----------------------------------------------------------+');
@@ -352,7 +400,18 @@ async function main() {
   if (!flags.has('no-browser')) setTimeout(() => openBrowser(address), 300);
 }
 
-main().catch((error) => {
-  console.error(`ОШИБКА: ${error.message}`);
-  process.exitCode = 1;
-});
+module.exports = {
+  DEFAULT_PORT,
+  SERVER_VERSION,
+  readState,
+  resetAdministrator,
+  startDusServer,
+  writeState,
+};
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`ОШИБКА: ${error.message}`);
+    process.exitCode = 1;
+  });
+}

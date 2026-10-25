@@ -138,7 +138,7 @@ export function ExcelWorkbookModal({
               </div>
 
               <div className="workbook-disconnect-row">
-                <p><AlertTriangle size={15} /><span>Не держите книгу открытой в Excel во время сохранения с сайта.</span></p>
+                <p><AlertTriangle size={15} /><span>Не держите книгу открытой в Excel во время сохранения из ДУС.</span></p>
                 <button type="button" onClick={onDisconnect} disabled={busy}><Unlink size={15} /> Отключить файл</button>
               </div>
             </>
@@ -148,7 +148,7 @@ export function ExcelWorkbookModal({
                 <span className="workbook-link-graphic"><FileSpreadsheet size={28} /><Link2 size={18} /></span>
                 <h3>Выберите рабочую книгу `.xlsx`</h3>
                 <p>
-                  Сайт прочитает все листы, создаст по одному ярлыку для каждого листа
+                  ДУС прочитает все листы, создаст по одному ярлыку для каждого листа
                   и сможет сохранять новые точки обратно в тот же файл.
                 </p>
               </div>

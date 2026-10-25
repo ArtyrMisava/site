@@ -40,6 +40,39 @@ export interface ExcelWorkbookSession {
   workbook: Workbook;
 }
 
+function normalizedArrayBuffer(value: ArrayBuffer | ArrayBufferView): ArrayBuffer {
+  if (value instanceof ArrayBuffer) return value;
+  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice().buffer;
+}
+
+function desktopFileHandle(selected: DusDesktopWorkbook, bridge: DusDesktopBridge): ExcelFileHandle {
+  let initialData: ArrayBuffer | null = normalizedArrayBuffer(selected.data);
+
+  return {
+    name: selected.name,
+    async getFile() {
+      const data = initialData ?? normalizedArrayBuffer(await bridge.readExcelWorkbook(selected.id));
+      initialData = null;
+      return new File([data], selected.name, {
+        type: XLSX_MIME,
+        lastModified: Date.now(),
+      });
+    },
+    async createWritable() {
+      let pendingData: ArrayBuffer | null = null;
+      return {
+        async write(data: Blob) {
+          pendingData = await data.arrayBuffer();
+        },
+        async close() {
+          if (!pendingData) throw new Error('Нет данных для сохранения Excel-файла.');
+          await bridge.writeExcelWorkbook(selected.id, pendingData);
+        },
+      };
+    },
+  };
+}
+
 interface IndexRecord {
   excelId: string;
   sheetName: string;
@@ -49,7 +82,8 @@ interface IndexRecord {
 }
 
 export function supportsExcelFileLink(): boolean {
-  return typeof (window as unknown as FilePickerWindow).showOpenFilePicker === 'function';
+  return Boolean(window.dusDesktop?.isDesktop)
+    || typeof (window as unknown as FilePickerWindow).showOpenFilePicker === 'function';
 }
 
 function newId(): string {
@@ -245,20 +279,30 @@ async function createWorkbook(): Promise<Workbook> {
 }
 
 export async function chooseExcelWorkbook(): Promise<ExcelWorkbookSession> {
-  const picker = (window as unknown as FilePickerWindow).showOpenFilePicker;
-  if (!picker) {
-    throw new Error('Прямая привязка Excel поддерживается в Google Chrome и Microsoft Edge.');
+  let handle: ExcelFileHandle | undefined;
+  const desktopBridge = window.dusDesktop;
+
+  if (desktopBridge?.isDesktop) {
+    const selected = await desktopBridge.pickExcelWorkbook();
+    if (!selected) throw new DOMException('Файл не выбран.', 'AbortError');
+    handle = desktopFileHandle(selected, desktopBridge);
+  } else {
+    const picker = (window as unknown as FilePickerWindow).showOpenFilePicker;
+    if (!picker) {
+      throw new Error('Прямая привязка Excel поддерживается в приложении ДУС, Google Chrome и Microsoft Edge.');
+    }
+
+    const handles = await picker({
+      multiple: false,
+      types: [{
+        description: 'Книга Excel',
+        accept: { [XLSX_MIME]: ['.xlsx'] },
+      }],
+    });
+    handle = handles[0];
   }
 
-  const handles = await picker({
-    multiple: false,
-    types: [{
-      description: 'Книга Excel',
-      accept: { [XLSX_MIME]: ['.xlsx'] },
-    }],
-  });
-  const handle = handles[0];
-  if (!handle) throw new Error('Файл не выбран.');
+  if (!handle) throw new DOMException('Файл не выбран.', 'AbortError');
   const file = await handle.getFile();
   const workbook = await createWorkbook();
   await workbook.xlsx.load(await file.arrayBuffer());

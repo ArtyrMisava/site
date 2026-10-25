@@ -1331,7 +1331,7 @@ export function MapView({
   }
 
   function resetFrontline() {
-    if (!window.confirm('Удалить ручные изменения и вернуть исходную линию из комплекта сайта?')) return;
+    if (!window.confirm('Удалить ручные изменения и вернуть исходную линию из комплекта ДУС?')) return;
     frontline.resetCustom();
   }
 
